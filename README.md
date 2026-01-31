@@ -1,7 +1,9 @@
 This SKSE plugin allows actors to apply a knockback force on melee hits.
 Configurable force, duration, latency, and exceptions for certain races.
 
-Example KnockbackPlugin.ini:
+Example `KnockbackPlugin.ini`:
+
+```ini
 ; =========================================
 ; Knockback Plugin Configuration
 ; =========================================
@@ -50,6 +52,7 @@ Deny =
     Skyrim.esm|00013798,    ; DwarvenAutomatonRace
     Skyrim.esm|00012E82,    ; DragonPriestRace
     Skyrim.esm|000131F5     ; MammothRace
+```
 
 ========================================================================================================
 
@@ -62,3 +65,4 @@ Commercial use is **explicitly prohibited**, including but not limited to:
 - Offering it as part of a paid product, service, or subscription
 - Hosting it as a paid SaaS or API
 - Charging fees for access, support, or distribution
+
