@@ -1,107 +1,64 @@
-> 📜 other templates available at https://github.com/SkyrimScripting/SKSE_Templates
+This SKSE plugin allows actors to apply a knockback force on melee hits.
+Configurable force, duration, latency, and exceptions for certain races.
 
-# SKSE "Hello, world!"
+Example KnockbackPlugin.ini:
+; =========================================
+; Knockback Plugin Configuration
+; =========================================
 
-Very simple C++ SKSE plugin for Skyrim!
+[General]
+; Strength of the physics shove applied on a melee hit.
+; Typical range:
+;   1.0  = very subtle
+;   2.5  = light knockback (recommended default)
+;   4.0+ = strong shove / noticeable stagger
+ShoveMagnitude = 3.5
+ShoveDuration = 0.12
+;   Retries for number of frames to try after a failed frame.
+;   If it feels sluggish or laggy, reduce these or set to 0
+ShoveRetries=3
+ShoveRetryDelayFrames=1
+;   No knockback to enemies in first person. Player should still get knocked back.
+DisableInFirstPerson=true
 
----
 
-- [SKSE "Hello, world!"](#skse-hello-world)
-- [What does it do?](#what-does-it-do)
-- [CommonLibSSE NG](#commonlibsse-ng)
-- [Requirements](#requirements)
-  - [Opening the project](#opening-the-project)
-- [Project setup](#project-setup)
-  - [Finding Your "`mods`" Folder](#finding-your-mods-folder)
-- [Setup your own repository](#setup-your-own-repository)
-- [Sharing is Caring](#sharing-is-caring)
+[Races]
+; ==========================================================
+; Race filtering
+;
+; Format for each entry:
+;   PluginName.esm|FormID
+;
+; Examples:
+;   Skyrim.esm|00013796
+;   Update.esm|00000800
+;
+; Notes:
+; - If Allow is empty, ALL races are eligible unless denied.
+; - If Allow has entries, ONLY those races are eligible
+;   (deny list always wins).
+; ==========================================================
 
-# What does it do?
+; Leave Allow empty to use keyword-based humanoid detection
+Allow =
 
-After running Skyrim, once at the Main Menu, press the `~` key to open the game console.
+; Races that should NEVER be knocked back
+; (Dragons, Giants, Dwarven Automatons, etc.)
+Deny =
+    Skyrim.esm|00013796,    ; DragonRace
+    Skyrim.esm|00013797,    ; GiantRace
+    Skyrim.esm|00013798,    ; DwarvenAutomatonRace
+    Skyrim.esm|00012E82,    ; DragonPriestRace
+    Skyrim.esm|000131F5     ; MammothRace
 
-You will see that we printed `"Hello, world!"` to the console at the Main Menu 🐉
+========================================================================================================
 
-# CommonLibSSE NG
+## License and Commercial Use
 
-Because this uses [CommonLibSSE NG](https://github.com/CharmedBaryon/CommonLibSSE-NG), it supports Skyrim SE, AE, GOG, and VR.
+This repository is provided for **non-commercial use only**.
 
-[CommonLibSSE NG](https://github.com/CharmedBaryon/CommonLibSSE-NG) is a fork of the popular [powerof3 fork](https://github.com/powerof3/CommonLibSSE) of the _original_ `CommonLibSSE` library created by [Ryan McKenzie](https://github.com/Ryan-rsm-McKenzie) in [2018](https://github.com/Ryan-rsm-McKenzie/CommonLibSSE/commit/224773c424bdb8e36c761810cdff0fcfefda5f4a).
-
-# Requirements
-
-- [Visual Studio 2022](https://visualstudio.microsoft.com/) (_the free Community edition_)
-- [`vcpkg`](https://github.com/microsoft/vcpkg)
-  - 1. Clone the repository using git OR [download it as a .zip](https://github.com/microsoft/vcpkg/archive/refs/heads/master.zip)
-  - 2. Go into the `vcpkg` folder and double-click on `bootstrap-vcpkg.bat`
-  - 3. Edit your system or user Environment Variables and add a new one:
-    - Name: `VCPKG_ROOT`  
-      Value: `C:\path\to\wherever\your\vcpkg\folder\is`
-
-<img src="https://raw.githubusercontent.com/SkyrimDev/Images/main/images/screenshots/Setting%20Environment%20Variables/VCPKG_ROOT.png" height="150">
-
-## Opening the project
-
-Once you have Visual Studio 2022 installed, you can open this folder in basically any C++ editor, e.g. [VS Code](https://code.visualstudio.com/) or [CLion](https://www.jetbrains.com/clion/) or [Visual Studio](https://visualstudio.microsoft.com/)
-- > _for VS Code, if you are not automatically prompted to install the [C++](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools) and [CMake Tools](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cmake-tools) extensions, please install those and then close VS Code and then open this project as a folder in VS Code_
-
-You may need to click `OK` on a few windows, but the project should automatically run CMake!
-
-It will _automatically_ download [CommonLibSSE NG](https://github.com/CharmedBaryon/CommonLibSSE-NG) and everything you need to get started making your new plugin!
-
-# Project setup
-
-By default, when this project compiles it will output a `.dll` for your SKSE plugin into the `build/` folder.
-
-If you want to configure this project to output your plugin files
-into your Skyrim Special Edition's "`Data`" folder:
-
-- Set the `SKYRIM_FOLDER` environment variable to the path of your Skyrim installation  
-  e.g. `C:\Program Files (x86)\Steam\steamapps\common\Skyrim Special Edition`
-
-<img src="https://raw.githubusercontent.com/SkyrimDev/Images/main/images/screenshots/Setting%20Environment%20Variables/SKYRIM_FOLDER.png" height="150">
-
-If you want to configure this project to output your plugin files
-into your "`mods`" folder:  
-(_for Mod Organizer 2 or Vortex_)
-
-- Set the `SKYRIM_MODS_FOLDER` environment variable to the path of your mods folder:  
-  e.g. `C:\Users\<user>\AppData\Local\ModOrganizer\Skyrim Special Edition\mods`  
-  e.g. `C:\Users\<user>\AppData\Roaming\Vortex\skyrimse\mods`
-
-<img src="https://raw.githubusercontent.com/SkyrimDev/Images/main/images/screenshots/Setting%20Environment%20Variables/SKYRIM_MODS_FOLDER.png" height="150">
-
-## Finding Your "`mods`" Folder
-
-In Mod Organizer 2:
-
-> Click the `...` next to "Mods" to get the full folder path
-
-<img src="https://raw.githubusercontent.com/SkyrimDev/Images/main/images/screenshots/MO2/MO2SettingsModsFolder.png" height="150">
-
-In Vortex:
-
-<img src="https://raw.githubusercontent.com/SkyrimDev/Images/main/images/screenshots/Vortex/VortexSettingsModsFolder.png" height="150">
-
-# Setup your own repository
-
-If you clone this template on GitHub, please:
-
-- Go into `LICENSE` and change the year and change `<YOUR NAME HERE>` to your name.
-- Go into `CODE_OF_CONDUCT.md` and change `<YOUR CONTACT INFO HERE>` to your contact information.
-
-The `LICENSE` defaults to using the [MIT License](https://choosealicense.com/licenses/mit/), a permissive license which is used by many popular Skyrim mods (_including [CommonLibSSE](https://github.com/Ryan-rsm-McKenzie/CommonLibSSE)_).
-
-The `CODE_OF_CONDUCT.md` defaults to using the [Contributor Covenant](https://www.contributor-covenant.org/), the most popular code of conduct for open source communities.
-
-If you'd like to know more about open source licenses, see:
-- [Licensing a repository](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository)
-- [Choose an open source license](https://choosealicense.com/)
-
-# Sharing is Caring
-
-**If you use this template, PLEASE release your project as a public open source project.** 💖
-
-**Please do not release your SKSE plugin on Nexus/etc without making the source code available** \*
-
-> \* _You do you. But please help our community by sharing your source `<3`_
+Commercial use is **explicitly prohibited**, including but not limited to:
+- Selling the software or source code
+- Offering it as part of a paid product, service, or subscription
+- Hosting it as a paid SaaS or API
+- Charging fees for access, support, or distribution
