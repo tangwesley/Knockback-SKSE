@@ -12,7 +12,7 @@ Example `KnockbackPlugin.ini`:
 ; Strength of the physics shove applied on a melee hit.
 ; Typical range:
 ;   1.0  = very subtle
-;   2.5  = light knockback (recommended default)
+;   3.5  = light knockback (recommended default)
 ;   4.0+ = strong shove / noticeable stagger
 ShoveMagnitude = 3.5
 ShoveDuration = 0.12
@@ -23,6 +23,12 @@ ShoveRetryDelayFrames=1
 ;   No knockback to enemies in first person. Player should still get knocked back.
 DisableInFirstPerson=true
 
+; Set for scaling when ShoveMagnitude is too low. Here's the formula.
+; peakV = max(ShoveMagnitude, ApplyCurrentMinVelocity)
+; scaledDuration = ShoveDuration * (ShoveMagnitude / peakV)
+; scaledDuration = max(scaledDuration, configDuration * minDurationScale)
+ApplyCurrentMinVelocity=4.0
+MinDurationScale=0.15
 
 [Races]
 ; ==========================================================
@@ -52,6 +58,7 @@ Deny =
     Skyrim.esm|00013798,    ; DwarvenAutomatonRace
     Skyrim.esm|00012E82,    ; DragonPriestRace
     Skyrim.esm|000131F5     ; MammothRace
+
 ```
 
 ========================================================================================================
