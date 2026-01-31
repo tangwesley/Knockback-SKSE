@@ -57,6 +57,11 @@ namespace {
         // How long to apply that velocity burst.
         float shoveDuration{0.12f};
 
+        // acceptance helper (not a gameplay min)
+        float applyCurrentMinVelocity{4.0f};   
+        // clamp: duration won't go below dur*scale
+        float minDurationScale{0.15f};         
+
         // How many total attempts to apply shove (including first queued attempt).
         std::int32_t shoveRetries{3};
 
@@ -192,15 +197,19 @@ namespace {
             return;
         }
 
-        g_cfg.shoveMagnitude =
-            static_cast<float>(ini.GetDoubleValue("General", "ShoveMagnitude", g_cfg.shoveMagnitude));
+        g_cfg.shoveMagnitude = static_cast<float>(ini.GetDoubleValue("General", "ShoveMagnitude", g_cfg.shoveMagnitude));
         g_cfg.shoveDuration = static_cast<float>(ini.GetDoubleValue("General", "ShoveDuration", g_cfg.shoveDuration));
 
         g_cfg.shoveRetries = static_cast<std::int32_t>(ini.GetLongValue("General", "ShoveRetries", g_cfg.shoveRetries));
-        g_cfg.shoveRetryDelayFrames = static_cast<std::int32_t>(
-            ini.GetLongValue("General", "ShoveRetryDelayFrames", g_cfg.shoveRetryDelayFrames));
+        g_cfg.shoveRetryDelayFrames = static_cast<std::int32_t>( ini.GetLongValue("General", "ShoveRetryDelayFrames", g_cfg.shoveRetryDelayFrames));
 
         g_cfg.disableInFirstPerson = ini.GetBoolValue("General", "DisableInFirstPerson", g_cfg.disableInFirstPerson);
+        g_cfg.applyCurrentMinVelocity = static_cast<float>(ini.GetDoubleValue("General", "ApplyCurrentMinVelocity", g_cfg.applyCurrentMinVelocity));
+        g_cfg.minDurationScale = static_cast<float>(ini.GetDoubleValue("General", "MinDurationScale", g_cfg.minDurationScale));
+
+        if (g_cfg.applyCurrentMinVelocity < 0.0f) g_cfg.applyCurrentMinVelocity = 0.0f;
+        if (g_cfg.minDurationScale < 0.0f) g_cfg.minDurationScale = 0.0f;
+        if (g_cfg.minDurationScale > 1.0f) g_cfg.minDurationScale = 1.0f;
 
         // Clamp to sane values
         if (g_cfg.shoveRetries < 1) {
@@ -364,32 +373,44 @@ namespace {
             case RE::WEAPON_TYPE::kOneHandMace:
             case RE::WEAPON_TYPE::kTwoHandSword:
             case RE::WEAPON_TYPE::kTwoHandAxe:
+            case RE::WEAPON_TYPE::kHandToHandMelee:
                 return true;
             default:
                 return false;
         }
     }
 
+    static bool IsMagicSource(RE::FormID sourceID)
+    {
+        if (sourceID == 0) {
+            return false;
+        }
+
+        auto* form = RE::TESForm::LookupByID(sourceID);
+        if (!form) {
+            return false;
+        }
+
+        // Treat any MagicItem-derived thing as "spell/magic hit"
+        return form->As<RE::MagicItem>() != nullptr;
+    }
+
     static const RE::TESObjectWEAP* ResolveWeaponFromEventOrEquipped(const RE::TESHitEvent& evt, RE::Actor* aggressor) {
-        if (aggressor) {
-            if (auto right = aggressor->GetEquippedObject(false)) {
-                if (auto weap = right->As<RE::TESObjectWEAP>()) {
-                    return weap;
-                }
-            }
-            if (auto left = aggressor->GetEquippedObject(true)) {
-                if (auto weap = left->As<RE::TESObjectWEAP>()) {
+        if (evt.source != 0) {
+            if (auto* form = RE::TESForm::LookupByID(evt.source)) {
+                if (auto* weap = form->As<RE::TESObjectWEAP>()) {
                     return weap;
                 }
             }
         }
 
-        (void)evt;
         return nullptr;
     }
 
+
     static bool ApplyPhysicsShove(RE::Actor* aggressor, RE::Actor* target, float magnitude, float duration) {
         if (!aggressor || !target) {
+            logger::trace("ApplyPhysicsShove: null aggressor/target");
             return false;
         }
 
@@ -406,6 +427,8 @@ namespace {
 
         const float lenSq = dx * dx + dy * dy + dz * dz;
         if (lenSq < 1e-6f) {
+            logger::trace("ApplyPhysicsShove: degenerate dir (aPos=({},{}), tPos=({},{}), lenSq={})",
+                aPos.x, aPos.y, tPos.x, tPos.y, lenSq);
             return false;
         }
 
@@ -433,6 +456,7 @@ namespace {
                                   std::int32_t delayFrames) {
         auto taskIf = SKSE::GetTaskInterface();
         if (!taskIf) {
+			logger::trace("Shove (queued): no TaskInterface");
             return;
         }
 
@@ -470,7 +494,21 @@ namespace {
                 return;
             }
 
-            const bool ok = ApplyPhysicsShove(aggressor, target, g_cfg.shoveMagnitude, g_cfg.shoveDuration);
+            float mag = g_cfg.shoveMagnitude;
+            float dur = g_cfg.shoveDuration;
+
+            // Shape it for ApplyCurrent acceptance: raise peak, shorten duration to preserve "feel"
+            if (g_cfg.applyCurrentMinVelocity > 0.0f && mag > 0.0f) {
+                const float peak = std::max(mag, g_cfg.applyCurrentMinVelocity);
+                const float scaled = dur * (mag / peak);  // preserve displacement ~ mag*dur
+                const float minDur = dur * g_cfg.minDurationScale;
+
+                mag = peak;
+                dur = std::max(scaled, minDur);
+            }
+
+            const bool ok = ApplyPhysicsShove(aggressor, target, mag, dur);
+
             if (ok) {
                 logger::trace("Shove (queued): applied (tries left after this={})", remainingTries - 1);
                 return;
@@ -530,11 +568,23 @@ namespace {
                 return RE::BSEventNotifyControl::kContinue;
             }
 
+            // 1) Never shove on projectile hits (arrows, bolts, spell projectiles, etc.)
+            if (a_event->projectile != 0) {
+                logger::trace("Shove: skipped (projectile hit) projectile={:08X}", a_event->projectile);
+                return RE::BSEventNotifyControl::kContinue;
+            }
+
+            // 2) Never shove on magic/spell sources
+            if (IsMagicSource(a_event->source)) {
+                logger::trace("Shove: skipped (magic source) source={:08X}", a_event->source);
+                return RE::BSEventNotifyControl::kContinue;
+            }
+
             // Melee weapon-only
             const auto* weap = ResolveWeaponFromEventOrEquipped(*a_event, aggressor);
 
             // Treat nullptr as unarmed melee (fists)
-            const bool isMelee = (weap == nullptr) ? true : IsMeleeWeapon(weap);
+            const bool isMelee = IsMeleeWeapon(weap) || weap == nullptr;
             if (!isMelee) {
                 logger::trace("Shove: weapon is not melee");
                 return RE::BSEventNotifyControl::kContinue;
