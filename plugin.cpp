@@ -76,6 +76,27 @@ namespace {
         std::unordered_set<RE::FormID> allowRaces;
         std::unordered_set<RE::FormID> denyRaces;
 
+        // min separation enforcement
+        bool enforceMinSeparation{ true };
+
+        // Minimum horizontal distance between aggressor and target after shove (game units).
+        float minSeparationDistance{ 110.0f };
+
+        // How long each “push aggressor back” burst lasts.
+        float separationPushDuration{ 0.10f };
+
+        // Clamp the “speed” we compute for separation correction.
+        float separationMaxVelocity{ 10.0f };
+
+        // How many tries to enforce separation after a shove succeeds.
+        std::int32_t separationRetries{ 6 };
+
+        // Frames to wait before first enforcement check (physics needs a tick to resolve collisions).
+        std::int32_t separationInitialDelayFrames{ 1 };
+
+        // Frames between enforcement attempts.
+        std::int32_t separationRetryDelayFrames{ 1 };
+
         bool HasAllowList() const { return !allowRaces.empty(); }
     };
 
@@ -207,6 +228,23 @@ namespace {
         g_cfg.applyCurrentMinVelocity = static_cast<float>(ini.GetDoubleValue("General", "ApplyCurrentMinVelocity", g_cfg.applyCurrentMinVelocity));
         g_cfg.minDurationScale = static_cast<float>(ini.GetDoubleValue("General", "MinDurationScale", g_cfg.minDurationScale));
 
+        g_cfg.enforceMinSeparation = ini.GetBoolValue("General", "EnforceMinSeparation", g_cfg.enforceMinSeparation);
+        g_cfg.minSeparationDistance = static_cast<float>(ini.GetDoubleValue("General", "MinSeparationDistance", g_cfg.minSeparationDistance));
+        g_cfg.separationPushDuration = static_cast<float>(ini.GetDoubleValue("General", "SeparationPushDuration", g_cfg.separationPushDuration));
+        g_cfg.separationMaxVelocity = static_cast<float>(ini.GetDoubleValue("General", "SeparationMaxVelocity", g_cfg.separationMaxVelocity));
+        g_cfg.separationRetries = static_cast<std::int32_t>(ini.GetLongValue("General", "SeparationRetries", g_cfg.separationRetries));
+        g_cfg.separationInitialDelayFrames = static_cast<std::int32_t>(ini.GetLongValue("General", "SeparationInitialDelayFrames", g_cfg.separationInitialDelayFrames));
+        g_cfg.separationRetryDelayFrames = static_cast<std::int32_t>(ini.GetLongValue("General", "SeparationRetryDelayFrames", g_cfg.separationRetryDelayFrames));
+
+        // clamps
+        if (g_cfg.minSeparationDistance < 0.0f) g_cfg.minSeparationDistance = 0.0f;
+        if (g_cfg.separationPushDuration < 0.01f) g_cfg.separationPushDuration = 0.01f;
+        if (g_cfg.separationMaxVelocity < 0.0f) g_cfg.separationMaxVelocity = 0.0f;
+
+        g_cfg.separationRetries = std::clamp(g_cfg.separationRetries, 0, 20);
+        g_cfg.separationInitialDelayFrames = std::clamp(g_cfg.separationInitialDelayFrames, 0, 10);
+        g_cfg.separationRetryDelayFrames = std::clamp(g_cfg.separationRetryDelayFrames, 1, 10);
+
         if (g_cfg.applyCurrentMinVelocity < 0.0f) g_cfg.applyCurrentMinVelocity = 0.0f;
         if (g_cfg.minDurationScale < 0.0f) g_cfg.minDurationScale = 0.0f;
         if (g_cfg.minDurationScale > 1.0f) g_cfg.minDurationScale = 1.0f;
@@ -317,6 +355,12 @@ namespace {
         return false;
     }
 
+    static bool IsPlayer(RE::Actor* a)
+    {
+        auto* player = RE::PlayerCharacter::GetSingleton();
+        return a && player && a == player;
+    }
+
     static bool IsHumanoidAllowed(const RE::Actor* target) {
         if (!target) {
             return false;
@@ -407,7 +451,6 @@ namespace {
         return nullptr;
     }
 
-
     static bool ApplyPhysicsShove(RE::Actor* aggressor, RE::Actor* target, float magnitude, float duration) {
         if (!aggressor || !target) {
             logger::trace("ApplyPhysicsShove: null aggressor/target");
@@ -448,6 +491,129 @@ namespace {
         // Apply a short velocity burst
         return target->ApplyCurrent(duration, vel);
     }
+
+    static float HorizontalDistance(RE::Actor* a, RE::Actor* b)
+    {
+        if (!a || !b) return 0.0f;
+        const auto ap = a->GetPosition();
+        const auto bp = b->GetPosition();
+        const float dx = bp.x - ap.x;
+        const float dy = bp.y - ap.y;
+        return std::sqrt(dx * dx + dy * dy);
+    }
+
+    // Apply a velocity burst to `who` in direction (from -> to), flattened to XY.
+    // This is basically your ApplyPhysicsShove but generalized.
+    static bool ApplyVelocityAwayFrom(RE::Actor* from, RE::Actor* who, float magnitude, float duration)
+    {
+        // direction from `from` to `who` means it pushes `who` away from `from`
+        return ApplyPhysicsShove(from, who, magnitude, duration);
+    }
+
+    // Same shaping you already do for ApplyCurrent acceptance (reuse for separation pushes too).
+    static void ShapeForApplyCurrent(float& mag, float& dur)
+    {
+        if (g_cfg.applyCurrentMinVelocity > 0.0f && mag > 0.0f) {
+            const float peak = std::max(mag, g_cfg.applyCurrentMinVelocity);
+            const float scaled = dur * (mag / peak);
+            const float minDur = dur * g_cfg.minDurationScale;
+            mag = peak;
+            dur = std::max(scaled, minDur);
+        }
+    }
+
+    static void QueueEnforceMinSeparation(RE::ActorHandle aggressorH,
+        RE::ActorHandle targetH,
+        std::int32_t remainingTries,
+        std::int32_t delayFrames,
+        float lastDist = -1.0f,
+        std::int32_t noProgressCount = 0)
+    {
+        if (!g_cfg.enforceMinSeparation || g_cfg.minSeparationDistance <= 0.0f || remainingTries <= 0) {
+            return;
+        }
+
+        auto taskIf = SKSE::GetTaskInterface();
+        if (!taskIf) {
+            logger::trace("Separation: no TaskInterface");
+            return;
+        }
+
+        taskIf->AddTask([aggressorH, targetH, remainingTries, delayFrames, lastDist, noProgressCount]() mutable {
+            if (delayFrames > 0) {
+                // Preserve progress tracking through the countdown
+                QueueEnforceMinSeparation(aggressorH, targetH, remainingTries, delayFrames - 1, lastDist, noProgressCount);
+                return;
+            }
+
+            auto aggressorPtr = aggressorH.get();
+            auto targetPtr = targetH.get();
+            RE::Actor* aggressor = aggressorPtr ? aggressorPtr.get() : nullptr;
+            RE::Actor* target = targetPtr ? targetPtr.get() : nullptr;
+
+            if (!aggressor || !target) return;
+            if (aggressor == target) return;
+            if (aggressor->IsDead() || target->IsDead()) return;
+
+            // Keep consistent with main shove logic
+            if (ShouldDisableDueToFirstPerson(aggressor)) return;
+            if (!IsHumanoidAllowed(target)) return;
+
+            const float dist = HorizontalDistance(aggressor, target);
+            const float minDist = g_cfg.minSeparationDistance;
+
+            // If we aren't seeing position updates between attempts, don't burn all retries.
+            if (lastDist >= 0.0f) {
+                const float delta = std::fabs(dist - lastDist);
+
+                // Consider < 1 unit change as "no progress"
+                if (delta < 1.0f) {
+                    noProgressCount++;
+                }
+                else {
+                    noProgressCount = 0;
+                }
+
+                // If we're not making progress for multiple attempts, bail early.
+                if (noProgressCount >= 2) {
+                    logger::trace("Separation: no progress (dist={} lastDist={} delta={}) -> stop",
+                        dist, lastDist, delta);
+                    return;
+                }
+            }
+
+            if (dist >= minDist) {
+                logger::trace("Separation: ok dist={} (min={})", dist, minDist);
+                return;
+            }
+
+            const float deficit = (minDist - dist);
+
+            // Convert “need this much extra distance” into “speed” for ApplyCurrent:
+            // displacement ~ speed * duration
+            float dur = g_cfg.separationPushDuration;
+            float mag = (dur > 1e-4f) ? (deficit / dur) : g_cfg.separationMaxVelocity;
+
+            if (g_cfg.separationMaxVelocity > 0.0f) {
+                mag = std::min(mag, g_cfg.separationMaxVelocity);
+            }
+
+            // ApplyCurrent acceptance shaping
+            ShapeForApplyCurrent(mag, dur);
+
+            const bool ok = ApplyVelocityAwayFrom(/*from=*/target, /*who=*/aggressor, mag, dur);
+
+            logger::trace("Separation: dist={} deficit={} -> pushAggressor mag={} dur={} ok={} triesLeftAfter={}",
+                dist, deficit, mag, dur, ok, remainingTries - 1);
+
+            const auto nextTries = remainingTries - 1;
+            if (nextTries > 0) {
+                // Pass current dist and current noProgressCount into next attempt
+                QueueEnforceMinSeparation(aggressorH, targetH, nextTries, g_cfg.separationRetryDelayFrames, dist, noProgressCount);
+            }
+            });
+    }
+
 
     // -------------------------
     // Next-frame queue + retries
@@ -511,8 +677,16 @@ namespace {
 
             if (ok) {
                 logger::trace("Shove (queued): applied (tries left after this={})", remainingTries - 1);
+
+                // enforce post-shove minimum separation (push aggressor if needed)
+                if (g_cfg.enforceMinSeparation && g_cfg.separationRetries > 0 && IsPlayer(aggressor)) {
+                    QueueEnforceMinSeparation(aggressorH, targetH,
+                        g_cfg.separationRetries,
+                        g_cfg.separationInitialDelayFrames);
+                }
                 return;
             }
+
 
             logger::trace("Shove (queued): failed to apply (tries left after this={})", remainingTries - 1);
 
@@ -544,7 +718,6 @@ namespace {
             RE::Actor* aggressor = a_event && a_event->cause ? a_event->cause->As<RE::Actor>() : nullptr;
 
             if (!target || !aggressor) {
-                logger::trace("Shove: missing target or aggressor");
                 return RE::BSEventNotifyControl::kContinue;
             }
             if (target == aggressor) {
@@ -552,13 +725,11 @@ namespace {
                 return RE::BSEventNotifyControl::kContinue;
             }
             if (target->IsDead() || aggressor->IsDead()) {
-                logger::trace("Shove: target or aggressor is dead");
                 return RE::BSEventNotifyControl::kContinue;
             }
 
             // Suppress in first-person if configured (player aggressor only)
             if (ShouldDisableDueToFirstPerson(aggressor)) {
-                logger::trace("Shove: suppressed (player in first-person)");
                 return RE::BSEventNotifyControl::kContinue;
             }
 
