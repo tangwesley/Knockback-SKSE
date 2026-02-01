@@ -31,7 +31,8 @@
 
 namespace logger = SKSE::log;
 
-void SetupLog() {
+void SetupLog()
+{
     auto logsFolder = SKSE::log::log_directory();
     if (!logsFolder) SKSE::stl::report_and_fail("SKSE log_directory not provided, logs disabled.");
 
@@ -46,30 +47,37 @@ void SetupLog() {
     spdlog::flush_on(spdlog::level::trace);
 }
 
-namespace {
+namespace
+{
     // -------------------------
     // Config
     // -------------------------
     struct Config {
         // Interpreted as "speed" for ApplyCurrent (units are game/Havok-y; tune by feel).
-        float shoveMagnitude{2.5f};
+        float shoveMagnitude{ 2.5f };
 
         // How long to apply that velocity burst.
-        float shoveDuration{0.12f};
+        float shoveDuration{ 0.12f };
 
         // acceptance helper (not a gameplay min)
-        float applyCurrentMinVelocity{4.0f};   
+        float applyCurrentMinVelocity{ 4.0f };
         // clamp: duration won't go below dur*scale
-        float minDurationScale{0.15f};         
+        float minDurationScale{ 0.15f };
 
         // How many total attempts to apply shove (including first queued attempt).
-        std::int32_t shoveRetries{3};
+        std::int32_t shoveRetries{ 3 };
 
         // How many "task ticks" to wait between attempts (1 ~= next update).
-        std::int32_t shoveRetryDelayFrames{1};
+        std::int32_t shoveRetryDelayFrames{ 1 };
+
+        // NEW: Delay before the first shove attempt (helps avoid same-tick controller clobber).
+        std::int32_t shoveInitialDelayFrames{ 1 };
+
+        // NEW: If after a shove the target hasn't separated by at least this many units, reapply shove.
+        float minShoveSeparationDelta{ 8.0f };
 
         // If true, do not apply knockback when the player (as aggressor) is in first-person.
-        bool disableInFirstPerson{true};
+        bool disableInFirstPerson{ true };
 
         // If allowRaces is non-empty, only races in this set qualify (unless denied).
         // If allowRaces is empty, races are eligible unless denied (and then keyword fallback applies).
@@ -105,16 +113,18 @@ namespace {
     // -------------------------
     // Helpers
     // -------------------------
-    static std::string Trim(std::string s) {
+    static std::string Trim(std::string s)
+    {
         auto is_space = [](unsigned char c) { return std::isspace(c) != 0; };
 
         s.erase(s.begin(), std::find_if(s.begin(), s.end(), [&](char c) { return !is_space((unsigned char)c); }));
         s.erase(std::find_if(s.rbegin(), s.rend(), [&](char c) { return !is_space((unsigned char)c); }).base(),
-                s.end());
+            s.end());
         return s;
     }
 
-    static std::string StripIniComment(std::string s) {
+    static std::string StripIniComment(std::string s)
+    {
         // Common INI comment starts: ';' or '#'
         const auto pos = s.find_first_of(";#");
         if (pos != std::string::npos) {
@@ -123,7 +133,8 @@ namespace {
         return Trim(std::move(s));
     }
 
-    static std::vector<std::string> SplitCSV(std::string_view csv) {
+    static std::vector<std::string> SplitCSV(std::string_view csv)
+    {
         std::vector<std::string> out;
         std::string cur;
         for (char c : csv) {
@@ -133,7 +144,8 @@ namespace {
                     out.push_back(std::move(cur));
                 }
                 cur.clear();
-            } else {
+            }
+            else {
                 cur.push_back(c);
             }
         }
@@ -146,7 +158,8 @@ namespace {
         return out;
     }
 
-    static std::string NormalizeHexToken(std::string hex) {
+    static std::string NormalizeHexToken(std::string hex)
+    {
         hex = Trim(std::move(hex));
 
         // Accept "FormID:00013796"
@@ -164,7 +177,8 @@ namespace {
 
     // Parse "PluginName.esm|00ABCDEF" -> full FormID (load-order aware)
     // Returns 0 on failure.
-    static RE::FormID ParseFormSpec(const std::string& spec) {
+    static RE::FormID ParseFormSpec(const std::string& spec)
+    {
         const auto cleaned = StripIniComment(spec);
         const auto bar = cleaned.find('|');
         if (bar == std::string::npos) {
@@ -181,7 +195,8 @@ namespace {
         std::uint32_t localID = 0;
         try {
             localID = static_cast<std::uint32_t>(std::stoul(hex, nullptr, 16));
-        } catch (...) {
+        }
+        catch (...) {
             return 0;
         }
 
@@ -197,7 +212,8 @@ namespace {
         return fullID;
     }
 
-    static void LoadConfig() {
+    static void LoadConfig()
+    {
         g_cfg = Config{};
 
         const auto pluginName = SKSE::PluginDeclaration::GetSingleton()->GetName();
@@ -222,7 +238,12 @@ namespace {
         g_cfg.shoveDuration = static_cast<float>(ini.GetDoubleValue("General", "ShoveDuration", g_cfg.shoveDuration));
 
         g_cfg.shoveRetries = static_cast<std::int32_t>(ini.GetLongValue("General", "ShoveRetries", g_cfg.shoveRetries));
-        g_cfg.shoveRetryDelayFrames = static_cast<std::int32_t>( ini.GetLongValue("General", "ShoveRetryDelayFrames", g_cfg.shoveRetryDelayFrames));
+        g_cfg.shoveRetryDelayFrames = static_cast<std::int32_t>(ini.GetLongValue("General", "ShoveRetryDelayFrames", g_cfg.shoveRetryDelayFrames));
+
+        g_cfg.shoveInitialDelayFrames = static_cast<std::int32_t>(
+            ini.GetLongValue("General", "ShoveInitialDelayFrames", g_cfg.shoveInitialDelayFrames));
+        g_cfg.minShoveSeparationDelta = static_cast<float>(
+            ini.GetDoubleValue("General", "MinShoveSeparationDelta", g_cfg.minShoveSeparationDelta));
 
         g_cfg.disableInFirstPerson = ini.GetBoolValue("General", "DisableInFirstPerson", g_cfg.disableInFirstPerson);
         g_cfg.applyCurrentMinVelocity = static_cast<float>(ini.GetDoubleValue("General", "ApplyCurrentMinVelocity", g_cfg.applyCurrentMinVelocity));
@@ -244,6 +265,9 @@ namespace {
         g_cfg.separationRetries = std::clamp(g_cfg.separationRetries, 0, 20);
         g_cfg.separationInitialDelayFrames = std::clamp(g_cfg.separationInitialDelayFrames, 0, 10);
         g_cfg.separationRetryDelayFrames = std::clamp(g_cfg.separationRetryDelayFrames, 1, 10);
+
+        g_cfg.shoveInitialDelayFrames = std::clamp(g_cfg.shoveInitialDelayFrames, 0, 10);
+        if (g_cfg.minShoveSeparationDelta < 0.0f) g_cfg.minShoveSeparationDelta = 0.0f;
 
         if (g_cfg.applyCurrentMinVelocity < 0.0f) g_cfg.applyCurrentMinVelocity = 0.0f;
         if (g_cfg.minDurationScale < 0.0f) g_cfg.minDurationScale = 0.0f;
@@ -269,7 +293,8 @@ namespace {
         for (auto& item : SplitCSV(allowStr)) {
             if (const auto id = ParseFormSpec(item); id != 0) {
                 g_cfg.allowRaces.insert(id);
-            } else {
+            }
+            else {
                 SKSE::log::warn("Invalid Allow race spec: '{}'", item);
             }
         }
@@ -277,20 +302,23 @@ namespace {
         for (auto& item : SplitCSV(denyStr)) {
             if (const auto id = ParseFormSpec(item); id != 0) {
                 g_cfg.denyRaces.insert(id);
-            } else {
+            }
+            else {
                 SKSE::log::warn("Invalid Deny race spec: '{}'", item);
             }
         }
 
         SKSE::log::info(
             "Config loaded: ShoveMagnitude={}, ShoveDuration={}, ShoveRetries={}, ShoveRetryDelayFrames={}, "
-            "DisableInFirstPerson={}, AllowRaces={}, DenyRaces={}",
+            "ShoveInitialDelayFrames={}, MinShoveSeparationDelta={}, DisableInFirstPerson={}, AllowRaces={}, DenyRaces={}",
             g_cfg.shoveMagnitude, g_cfg.shoveDuration, g_cfg.shoveRetries, g_cfg.shoveRetryDelayFrames,
+            g_cfg.shoveInitialDelayFrames, g_cfg.minShoveSeparationDelta,
             g_cfg.disableInFirstPerson, g_cfg.allowRaces.size(), g_cfg.denyRaces.size());
     }
 
     // True if we should suppress knockback because the player is in first-person.
-    static bool ShouldDisableDueToFirstPerson(RE::Actor* aggressor) {
+    static bool ShouldDisableDueToFirstPerson(RE::Actor* aggressor)
+    {
         if (!g_cfg.disableInFirstPerson) {
             return false;
         }
@@ -322,13 +350,14 @@ namespace {
     constexpr RE::FormID kKW_ActorTypeDwarvenAutomaton = 0x00013798;  // ActorTypeDwarvenAutomaton
 
     struct KeywordCache {
-        RE::BGSKeyword* npc{nullptr};
-        RE::BGSKeyword* undead{nullptr};
-        RE::BGSKeyword* dragon{nullptr};
-        RE::BGSKeyword* giant{nullptr};
-        RE::BGSKeyword* dwarvenAuto{nullptr};
+        RE::BGSKeyword* npc{ nullptr };
+        RE::BGSKeyword* undead{ nullptr };
+        RE::BGSKeyword* dragon{ nullptr };
+        RE::BGSKeyword* giant{ nullptr };
+        RE::BGSKeyword* dwarvenAuto{ nullptr };
 
-        void Init() {
+        void Init()
+        {
             npc = RE::TESForm::LookupByID<RE::BGSKeyword>(kKW_ActorTypeNPC);
             undead = RE::TESForm::LookupByID<RE::BGSKeyword>(kKW_ActorTypeUndead);
             dragon = RE::TESForm::LookupByID<RE::BGSKeyword>(kKW_ActorTypeDragon);
@@ -339,7 +368,8 @@ namespace {
 
     KeywordCache g_kw;
 
-    static bool HasKW(const RE::Actor* actor, const RE::BGSKeyword* kw) {
+    static bool HasKW(const RE::Actor* actor, const RE::BGSKeyword* kw)
+    {
         if (!actor || !kw) {
             return false;
         }
@@ -361,7 +391,8 @@ namespace {
         return a && player && a == player;
     }
 
-    static bool IsHumanoidAllowed(const RE::Actor* target) {
+    static bool IsHumanoidAllowed(const RE::Actor* target)
+    {
         if (!target) {
             return false;
         }
@@ -404,23 +435,24 @@ namespace {
     // -------------------------
     // Weapon filters
     // -------------------------
-    static bool IsMeleeWeapon(const RE::TESObjectWEAP* weap) {
+    static bool IsMeleeWeapon(const RE::TESObjectWEAP* weap)
+    {
         if (!weap) {
             return false;
         }
 
         const auto type = weap->GetWeaponType();
         switch (type) {
-            case RE::WEAPON_TYPE::kOneHandSword:
-            case RE::WEAPON_TYPE::kOneHandDagger:
-            case RE::WEAPON_TYPE::kOneHandAxe:
-            case RE::WEAPON_TYPE::kOneHandMace:
-            case RE::WEAPON_TYPE::kTwoHandSword:
-            case RE::WEAPON_TYPE::kTwoHandAxe:
-            case RE::WEAPON_TYPE::kHandToHandMelee:
-                return true;
-            default:
-                return false;
+        case RE::WEAPON_TYPE::kOneHandSword:
+        case RE::WEAPON_TYPE::kOneHandDagger:
+        case RE::WEAPON_TYPE::kOneHandAxe:
+        case RE::WEAPON_TYPE::kOneHandMace:
+        case RE::WEAPON_TYPE::kTwoHandSword:
+        case RE::WEAPON_TYPE::kTwoHandAxe:
+        case RE::WEAPON_TYPE::kHandToHandMelee:
+            return true;
+        default:
+            return false;
         }
     }
 
@@ -439,7 +471,8 @@ namespace {
         return form->As<RE::MagicItem>() != nullptr;
     }
 
-    static const RE::TESObjectWEAP* ResolveWeaponFromEventOrEquipped(const RE::TESHitEvent& evt, RE::Actor* aggressor) {
+    static const RE::TESObjectWEAP* ResolveWeaponFromEventOrEquipped(const RE::TESHitEvent& evt, RE::Actor* /*aggressor*/)
+    {
         if (evt.source != 0) {
             if (auto* form = RE::TESForm::LookupByID(evt.source)) {
                 if (auto* weap = form->As<RE::TESObjectWEAP>()) {
@@ -451,7 +484,30 @@ namespace {
         return nullptr;
     }
 
-    static bool ApplyPhysicsShove(RE::Actor* aggressor, RE::Actor* target, float magnitude, float duration) {
+    static float HorizontalDistance(RE::Actor* a, RE::Actor* b)
+    {
+        if (!a || !b) return 0.0f;
+        const auto ap = a->GetPosition();
+        const auto bp = b->GetPosition();
+        const float dx = bp.x - ap.x;
+        const float dy = bp.y - ap.y;
+        return std::sqrt(dx * dx + dy * dy);
+    }
+
+    // Same shaping you already do for ApplyCurrent acceptance (reuse for separation pushes too).
+    static void ShapeForApplyCurrent(float& mag, float& dur)
+    {
+        if (g_cfg.applyCurrentMinVelocity > 0.0f && mag > 0.0f) {
+            const float peak = std::max(mag, g_cfg.applyCurrentMinVelocity);
+            const float scaled = dur * (mag / peak);
+            const float minDur = dur * g_cfg.minDurationScale;
+            mag = peak;
+            dur = std::max(scaled, minDur);
+        }
+    }
+
+    static bool ApplyPhysicsShove(RE::Actor* aggressor, RE::Actor* target, float magnitude, float duration)
+    {
         if (!aggressor || !target) {
             logger::trace("ApplyPhysicsShove: null aggressor/target");
             return false;
@@ -492,16 +548,6 @@ namespace {
         return target->ApplyCurrent(duration, vel);
     }
 
-    static float HorizontalDistance(RE::Actor* a, RE::Actor* b)
-    {
-        if (!a || !b) return 0.0f;
-        const auto ap = a->GetPosition();
-        const auto bp = b->GetPosition();
-        const float dx = bp.x - ap.x;
-        const float dy = bp.y - ap.y;
-        return std::sqrt(dx * dx + dy * dy);
-    }
-
     // Apply a velocity burst to `who` in direction (from -> to), flattened to XY.
     // This is basically your ApplyPhysicsShove but generalized.
     static bool ApplyVelocityAwayFrom(RE::Actor* from, RE::Actor* who, float magnitude, float duration)
@@ -510,18 +556,9 @@ namespace {
         return ApplyPhysicsShove(from, who, magnitude, duration);
     }
 
-    // Same shaping you already do for ApplyCurrent acceptance (reuse for separation pushes too).
-    static void ShapeForApplyCurrent(float& mag, float& dur)
-    {
-        if (g_cfg.applyCurrentMinVelocity > 0.0f && mag > 0.0f) {
-            const float peak = std::max(mag, g_cfg.applyCurrentMinVelocity);
-            const float scaled = dur * (mag / peak);
-            const float minDur = dur * g_cfg.minDurationScale;
-            mag = peak;
-            dur = std::max(scaled, minDur);
-        }
-    }
-
+    // -------------------------
+    // Separation enforcement (player aggressor only, progress-gated)
+    // -------------------------
     static void QueueEnforceMinSeparation(RE::ActorHandle aggressorH,
         RE::ActorHandle targetH,
         std::int32_t remainingTries,
@@ -554,6 +591,11 @@ namespace {
             if (!aggressor || !target) return;
             if (aggressor == target) return;
             if (aggressor->IsDead() || target->IsDead()) return;
+
+            // Separation is only for player aggressor
+            if (!IsPlayer(aggressor)) {
+                return;
+            }
 
             // Keep consistent with main shove logic
             if (ShouldDisableDueToFirstPerson(aggressor)) return;
@@ -614,15 +656,83 @@ namespace {
             });
     }
 
+    // -------------------------
+    // Shove effectiveness check + reapply (Suggestion #1)
+    // -------------------------
+    static void QueueShoveEffectivenessCheck(RE::ActorHandle aggressorH,
+        RE::ActorHandle targetH,
+        std::int32_t remainingTries,
+        float distBefore,
+        std::int32_t delayFrames)
+    {
+        auto taskIf = SKSE::GetTaskInterface();
+        if (!taskIf) {
+            return;
+        }
+
+        taskIf->AddTask([aggressorH, targetH, remainingTries, distBefore, delayFrames]() {
+            if (delayFrames > 0) {
+                QueueShoveEffectivenessCheck(aggressorH, targetH, remainingTries, distBefore, delayFrames - 1);
+                return;
+            }
+
+            auto aggressorPtr = aggressorH.get();
+            auto targetPtr = targetH.get();
+            RE::Actor* aggressor = aggressorPtr ? aggressorPtr.get() : nullptr;
+            RE::Actor* target = targetPtr ? targetPtr.get() : nullptr;
+
+            if (!aggressor || !target) return;
+            if (aggressor == target) return;
+            if (aggressor->IsDead() || target->IsDead()) return;
+
+            if (ShouldDisableDueToFirstPerson(aggressor)) return;
+            if (!IsHumanoidAllowed(target)) return;
+
+            const float distAfter = HorizontalDistance(aggressor, target);
+            const float gained = distAfter - distBefore;
+
+            // If we gained enough separation, we're done.
+            if (gained >= g_cfg.minShoveSeparationDelta) {
+                logger::trace("ShoveEffect: ok (before={} after={} gained={} min={})",
+                    distBefore, distAfter, gained, g_cfg.minShoveSeparationDelta);
+                return;
+            }
+
+            logger::trace("ShoveEffect: insufficient (before={} after={} gained={} min={}) triesLeftAfter={}",
+                distBefore, distAfter, gained, g_cfg.minShoveSeparationDelta, remainingTries - 1);
+
+            const auto nextTries = remainingTries - 1;
+            if (nextTries <= 0) {
+                return;
+            }
+
+            // Reapply shove now, then schedule another check.
+            float mag = g_cfg.shoveMagnitude;
+            float dur = g_cfg.shoveDuration;
+            ShapeForApplyCurrent(mag, dur);
+
+            const bool ok = ApplyPhysicsShove(aggressor, target, mag, dur);
+            logger::trace("ShoveEffect: reapply ok={} mag={} dur={}", ok, mag, dur);
+
+            // Check again next frame (or configured retry delay frames, but never 0).
+            QueueShoveEffectivenessCheck(
+                aggressorH,
+                targetH,
+                nextTries,
+                distAfter,
+                std::max(1, g_cfg.shoveRetryDelayFrames));
+            });
+    }
 
     // -------------------------
     // Next-frame queue + retries
     // -------------------------
     static void QueuePhysicsShove(RE::ActorHandle aggressorH, RE::ActorHandle targetH, std::int32_t remainingTries,
-                                  std::int32_t delayFrames) {
+        std::int32_t delayFrames)
+    {
         auto taskIf = SKSE::GetTaskInterface();
         if (!taskIf) {
-			logger::trace("Shove (queued): no TaskInterface");
+            logger::trace("Shove (queued): no TaskInterface");
             return;
         }
 
@@ -664,21 +774,20 @@ namespace {
             float dur = g_cfg.shoveDuration;
 
             // Shape it for ApplyCurrent acceptance: raise peak, shorten duration to preserve "feel"
-            if (g_cfg.applyCurrentMinVelocity > 0.0f && mag > 0.0f) {
-                const float peak = std::max(mag, g_cfg.applyCurrentMinVelocity);
-                const float scaled = dur * (mag / peak);  // preserve displacement ~ mag*dur
-                const float minDur = dur * g_cfg.minDurationScale;
+            ShapeForApplyCurrent(mag, dur);
 
-                mag = peak;
-                dur = std::max(scaled, minDur);
-            }
-
+            const float distBefore = HorizontalDistance(aggressor, target);
             const bool ok = ApplyPhysicsShove(aggressor, target, mag, dur);
 
             if (ok) {
                 logger::trace("Shove (queued): applied (tries left after this={})", remainingTries - 1);
 
-                // enforce post-shove minimum separation (push aggressor if needed)
+                // NEW: verify shove "took" and reapply if needed
+                if (g_cfg.minShoveSeparationDelta > 0.0f) {
+                    QueueShoveEffectivenessCheck(aggressorH, targetH, remainingTries, distBefore, /*delayFrames*/ 1);
+                }
+
+                // enforce post-shove minimum separation (push aggressor if needed) - player aggressor only
                 if (g_cfg.enforceMinSeparation && g_cfg.separationRetries > 0 && IsPlayer(aggressor)) {
                     QueueEnforceMinSeparation(aggressorH, targetH,
                         g_cfg.separationRetries,
@@ -687,14 +796,13 @@ namespace {
                 return;
             }
 
-
             logger::trace("Shove (queued): failed to apply (tries left after this={})", remainingTries - 1);
 
             const auto nextTries = remainingTries - 1;
             if (nextTries > 0) {
                 QueuePhysicsShove(aggressorH, targetH, nextTries, g_cfg.shoveRetryDelayFrames);
             }
-        });
+            });
     }
 
     // -------------------------
@@ -702,13 +810,15 @@ namespace {
     // -------------------------
     class HitEventSink : public RE::BSTEventSink<RE::TESHitEvent> {
     public:
-        static HitEventSink* GetSingleton() {
+        static HitEventSink* GetSingleton()
+        {
             static HitEventSink s;
             return std::addressof(s);
         }
 
         RE::BSEventNotifyControl ProcessEvent(const RE::TESHitEvent* a_event,
-                                              RE::BSTEventSource<RE::TESHitEvent>*) override {
+            RE::BSTEventSource<RE::TESHitEvent>*) override
+        {
             if (!a_event) {
                 return RE::BSEventNotifyControl::kContinue;
             }
@@ -767,13 +877,14 @@ namespace {
                 target->GetFormID(), aggressor->GetFormID(), g_cfg.shoveMagnitude, g_cfg.shoveDuration,
                 g_cfg.shoveRetries, g_cfg.shoveRetryDelayFrames, g_cfg.disableInFirstPerson);
 
-            QueuePhysicsShove(aggressor->GetHandle(), target->GetHandle(), g_cfg.shoveRetries, /*delayFrames*/ 0);
+            QueuePhysicsShove(aggressor->GetHandle(), target->GetHandle(), g_cfg.shoveRetries, g_cfg.shoveInitialDelayFrames);
 
             return RE::BSEventNotifyControl::kContinue;
         }
     };
 
-    static void RegisterHitSink() {
+    static void RegisterHitSink()
+    {
         g_kw.Init();
         LoadConfig();
 
@@ -787,7 +898,8 @@ namespace {
         logger::info("Registered TESHitEvent sink");
     }
 
-    static void OnSKSEMessage(SKSE::MessagingInterface::Message* msg) {
+    static void OnSKSEMessage(SKSE::MessagingInterface::Message* msg)
+    {
         if (!msg) {
             return;
         }
@@ -796,9 +908,10 @@ namespace {
             RegisterHitSink();
         }
     }
-}
+}  // namespace
 
-SKSEPluginLoad(const SKSE::LoadInterface* skse) {
+SKSEPluginLoad(const SKSE::LoadInterface* skse)
+{
     SKSE::Init(skse);
     SetupLog();
 
