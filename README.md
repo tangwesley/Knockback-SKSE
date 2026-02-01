@@ -18,17 +18,27 @@ ShoveMagnitude = 3.5
 ShoveDuration = 0.12
 ;   Retries for number of frames to try after a failed frame.
 ;   If it feels sluggish or laggy, reduce these or set to 0
-ShoveRetries=3
+ShoveRetries=5
 ShoveRetryDelayFrames=1
 ;   No knockback to enemies in first person. Player should still get knocked back.
 DisableInFirstPerson=true
-
 ; Set for scaling when ShoveMagnitude is too low. Here's the formula.
 ; peakV = max(ShoveMagnitude, ApplyCurrentMinVelocity)
 ; scaledDuration = ShoveDuration * (ShoveMagnitude / peakV)
 ; scaledDuration = max(scaledDuration, configDuration * minDurationScale)
 ApplyCurrentMinVelocity=4.0
 MinDurationScale=0.15
+; Minimum separation enforcement (push aggressor back if too close after shove, useful if enemy is against a wall)
+EnforceMinSeparation=true
+MinSeparationDistance=80.0
+SeparationPushDuration=0.08
+SeparationMaxVelocity=12.0
+SeparationRetries=6
+SeparationInitialDelayFrames=2
+SeparationRetryDelayFrames=1
+; You don't need to touch these if you don't know what they do. They are for physics consistency checks.
+ShoveInitialDelayFrames=1
+MinShoveSeparationDelta=8.0
 
 [Races]
 ; ==========================================================
@@ -58,6 +68,7 @@ Deny =
     Skyrim.esm|00013798,    ; DwarvenAutomatonRace
     Skyrim.esm|00012E82,    ; DragonPriestRace
     Skyrim.esm|000131F5     ; MammothRace
+
 
 ```
 
