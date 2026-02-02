@@ -40,16 +40,43 @@ namespace Knockback
             return false;
         }
 
+        if (aggressor == target) {
+            return false;
+        }
+
+        // Basic lifecycle sanity (cheap + prevents weird edge cases)
+        if (target->IsDead() || aggressor->IsDead()) {
+            return false;
+        }
+
+        // Physics/3D validity gates (avoid ApplyCurrent crash paths)
+        if (!target->Is3DLoaded()) {
+            logger::trace("ApplyPhysicsShove: target not 3D loaded {:08X}", target->GetFormID());
+            return false;
+        }
+
+        auto* node = target->Get3D();
+        if (!node) {
+            logger::trace("ApplyPhysicsShove: target has no 3D {:08X}", target->GetFormID());
+            return false;
+        }
+
+        // controller gate. 
+        auto* cc = target->GetCharController();
+        if (!cc) {
+            logger::trace("ApplyPhysicsShove: no char controller {:08X}", target->GetFormID());
+            return false;
+        }
+
+        // Direction from aggressor -> target
         const auto aPos = aggressor->GetPosition();
         const auto tPos = target->GetPosition();
 
         float dx = tPos.x - aPos.x;
         float dy = tPos.y - aPos.y;
-        float dz = tPos.z - aPos.z;
+        float dz = 0.0f;  // flatten vertical
 
-        dz = 0.0f;
-
-        const float lenSq = dx * dx + dy * dy + dz * dz;
+        const float lenSq = dx * dx + dy * dy;
         if (lenSq < 1e-6f) {
             logger::trace("ApplyPhysicsShove: degenerate dir (aPos=({},{}), tPos=({},{}), lenSq={})",
                 aPos.x, aPos.y, tPos.x, tPos.y, lenSq);
@@ -59,17 +86,13 @@ namespace Knockback
         const float invLen = 1.0f / std::sqrt(lenSq);
         dx *= invLen;
         dy *= invLen;
-        dz *= invLen;
-
-        const float vx = dx * magnitude;
-        const float vy = dy * magnitude;
-        const float vz = dz * magnitude;
 
         RE::hkVector4 vel{};
-        vel.quad = _mm_setr_ps(vx, vy, vz, 0.0f);
+        vel.quad = _mm_setr_ps(dx * magnitude, dy * magnitude, dz, 0.0f);
 
         return target->ApplyCurrent(duration, vel);
     }
+
 
     bool ApplyVelocityAwayFrom(RE::Actor* from, RE::Actor* who, float magnitude, float duration)
     {

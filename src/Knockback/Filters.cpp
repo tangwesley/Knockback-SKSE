@@ -3,7 +3,9 @@
 
 #include <RE/P/PlayerCharacter.h>
 #include <RE/T/TESRace.h>
+#include <Knockback/Log.h>
 
+namespace logger = SKSE::log;
 namespace Knockback
 {
     // Keyword helpers (fallback heuristic)
@@ -84,6 +86,32 @@ namespace Knockback
         return cam->IsInFirstPerson();
     }
 
+    RE::TESRace* ResolveActorRace(const RE::Actor* actor)
+    {
+        if (!actor) {
+            return nullptr;
+        }
+
+        if (auto* r = actor->GetRace(); r) {
+            return r;
+        }
+
+        if (const auto* base = actor->GetActorBase(); base) {
+            return const_cast<RE::TESNPC*>(base)->GetRace();
+        }
+
+        return nullptr;
+    }
+
+
+    RE::FormID ResolveActorRaceID(const RE::Actor* actor)
+    {
+        if (auto* r = ResolveActorRace(actor)) {
+            return r->GetFormID();
+        }
+        return 0;
+    }
+
     bool IsHumanoidAllowed(const RE::Actor* target)
     {
         const auto& cfg = GetConfig();
@@ -92,12 +120,11 @@ namespace Knockback
             return false;
         }
 
-        const auto* race = target->GetRace();
-        if (!race) {
+        const auto raceID = ResolveActorRaceID(target);
+        if (!raceID) {
+            logger::trace("Race gate: no race resolved for target {:08X}", target ? target->GetFormID() : 0);
             return false;
         }
-
-        const RE::FormID raceID = race->GetFormID();
 
         // deny list wins
         if (cfg.denyRaces.contains(raceID)) {
@@ -105,22 +132,18 @@ namespace Knockback
         }
 
         // allow list enforced if present
-        if (cfg.HasAllowList() && !cfg.allowRaces.contains(raceID)) {
-            return false;
+        // Explicit allow list can add races (wolves, spiders, etc.)
+        if (cfg.HasAllowList() && cfg.allowRaces.contains(raceID)) {
+            return true;
         }
 
         // exclude big archetypes
-        if (HasKW(target, g_kw.dragon) || HasKW(target, g_kw.giant) || HasKW(target, g_kw.dwarvenAuto)) {
+        if (HasKW(target, g_kw.dragon) || HasKW(target, g_kw.giant)) {
             return false;
         }
 
         // allow humanoids + undead humanoids
         if (HasKW(target, g_kw.npc) || HasKW(target, g_kw.undead)) {
-            return true;
-        }
-
-        // if allow list exists we already passed it
-        if (cfg.HasAllowList()) {
             return true;
         }
 
