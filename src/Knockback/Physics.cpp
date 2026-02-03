@@ -90,6 +90,13 @@ namespace Knockback
         RE::hkVector4 vel{};
         vel.quad = _mm_setr_ps(dx * magnitude, dy * magnitude, dz, 0.0f);
 
+        logger::trace("ApplyPhysicsShove: applying vel=({}, {}, {}) mag={} dur={} to target {:08X}",
+            vel.quad.m128_f32[0],
+            vel.quad.m128_f32[1],
+            vel.quad.m128_f32[2],
+            magnitude,
+            duration,
+			target->GetFormID());
         return target->ApplyCurrent(duration, vel);
     }
 

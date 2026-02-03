@@ -42,7 +42,7 @@ namespace Knockback
             if (aggressor->IsDead() || target->IsDead()) return;
 
             if (ShouldDisableDueToFirstPerson(aggressor)) return;
-            if (!IsHumanoidAllowed(target)) return;
+            if (!IsValidKnockbackTarget(target)) return;
 
             if (weaponMult <= 0.0f) {
                 return;
@@ -127,7 +127,7 @@ namespace Knockback
             }
 
             if (ShouldDisableDueToFirstPerson(aggressor)) return;
-            if (!IsHumanoidAllowed(target)) return;
+            if (!IsValidKnockbackTarget(target)) return;
 
             const float dist = HorizontalDistance(aggressor, target);
             const float minDist = cfg.minSeparationDistance;
@@ -213,7 +213,7 @@ namespace Knockback
                 return;
             }
 
-            if (!IsHumanoidAllowed(target)) {
+            if (!IsValidKnockbackTarget(target)) {
                 return;
             }
 
@@ -263,6 +263,39 @@ namespace Knockback
             if (nextTries > 0) {
                 QueuePhysicsShove(aggressorH, targetH, nextTries, cfg.shoveRetryDelayFrames, weaponMult);
             }
+            });
+    }
+
+    void QueuePhysicsShoveWithAttackDeferral(
+        RE::ActorHandle aggressorH,
+        RE::ActorHandle targetH,
+        std::int32_t tries,
+        float weaponMult,
+        std::int32_t remainingWaitFrames)
+    {
+        auto taskIf = SKSE::GetTaskInterface();
+        if (!taskIf) return;
+
+        taskIf->AddTask([=]() {
+            auto aPtr = aggressorH.get();
+            auto tPtr = targetH.get();
+            auto* aggressor = aPtr ? aPtr.get() : nullptr;
+            auto* target = tPtr ? tPtr.get() : nullptr;
+            if (!aggressor || !target) return;
+
+            // If still attacking, keep deferring until we hit the cap
+            if (remainingWaitFrames > 0 && GetIsAttacking(target)) {
+                constexpr std::int32_t poll = 1;
+                QueuePhysicsShoveWithAttackDeferral(
+                    aggressorH, targetH, tries, weaponMult,
+                    remainingWaitFrames - poll);
+
+                logger::trace("Actor attacking. Deferring...");
+                return;
+            }
+
+            const auto& cfg = GetConfig();
+            QueuePhysicsShove(aggressorH, targetH, tries, cfg.shoveInitialDelayFrames, weaponMult);
             });
     }
 }

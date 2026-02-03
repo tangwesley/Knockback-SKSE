@@ -26,4 +26,11 @@ namespace Knockback
         std::int32_t delayFrames,
         float lastDist = -1.0f,
         std::int32_t noProgressCount = 0);
+
+    void QueuePhysicsShoveWithAttackDeferral(
+        RE::ActorHandle aggressorH,
+        RE::ActorHandle targetH,
+        std::int32_t tries,
+        float weaponMult,
+        std::int32_t remainingWaitFrames);
 }

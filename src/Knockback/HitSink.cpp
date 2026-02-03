@@ -39,7 +39,7 @@ namespace Knockback
 
             if (ShouldDisableDueToFirstPerson(aggressor)) return RE::BSEventNotifyControl::kContinue;
 
-            if (!IsHumanoidAllowed(target)) {
+            if (!IsValidKnockbackTarget(target)) {
                 logger::trace("Shove: target not allowed (humanoid filter)");
                 return RE::BSEventNotifyControl::kContinue;
             }
@@ -55,9 +55,10 @@ namespace Knockback
             }
 
             const auto* weap = ResolveWeaponFromEventOrEquipped(*a_event, aggressor);
-            const bool isMelee = IsMeleeWeapon(weap) || weap == nullptr;
-            if (!isMelee) {
-                logger::trace("Shove: weapon is not melee");
+
+            const float weaponMult = GetWeaponMultiplier(weap);
+            if (weaponMult <= 0.0f) {
+                logger::trace("Shove: weapon is not configured");
                 return RE::BSEventNotifyControl::kContinue;
             }
 
@@ -66,11 +67,17 @@ namespace Knockback
             logger::trace(
                 "Shove: queue target={:08X} aggressor={:08X} mag={} dur={} retries={} delayFrames={} DisableInFirstPerson={}",
                 target->GetFormID(), aggressor->GetFormID(),
-                cfg.shoveMagnitude * GetWeaponMultiplier(weap), cfg.shoveDuration,
+                cfg.shoveMagnitude * weaponMult, cfg.shoveDuration,
                 cfg.shoveRetries, cfg.shoveRetryDelayFrames,
                 cfg.disableInFirstPerson);
 
-            QueuePhysicsShove(aggressor->GetHandle(), target->GetHandle(), cfg.shoveRetries, cfg.shoveInitialDelayFrames, GetWeaponMultiplier(weap));
+            QueuePhysicsShoveWithAttackDeferral(
+                aggressor->GetHandle(),
+                target->GetHandle(),
+                cfg.shoveRetries,
+                weaponMult,
+				20);
+            
             return RE::BSEventNotifyControl::kContinue;
         }
     };

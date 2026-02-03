@@ -252,27 +252,33 @@ namespace Knockback
 		// ============================================================
         // Races
 		// ============================================================
-        const char* allowStr = ini.GetValue("Races", "Allow", "");
-        const char* denyStr = ini.GetValue("Races", "Deny", "");
+        {
+            CSimpleIniA::TNamesDepend allowVals;
+            CSimpleIniA::TNamesDepend denyVals;
 
-        for (auto& item : SplitCSV(allowStr)) {
-            if (const auto id = ParseFormSpec(item); id != 0) {
-                g_cfg.allowRaces.insert(id);
+            ini.GetAllValues("Races", "Allow", allowVals);
+            ini.GetAllValues("Races", "Deny", denyVals);
+
+            for (const auto& v : allowVals) {
+                if (!v.pItem) continue;
+                if (const auto id = ParseFormSpec(v.pItem); id != 0) {
+                    g_cfg.allowRaces.insert(id);
+                }
+                else {
+                    logger::warn("Invalid Allow race spec: '{}'", v.pItem);
+                }
             }
-            else {
-                logger::warn("Invalid Allow race spec: '{}'", item);
+
+            for (const auto& v : denyVals) {
+                if (!v.pItem) continue;
+                if (const auto id = ParseFormSpec(v.pItem); id != 0) {
+                    g_cfg.denyRaces.insert(id);
+                }
+                else {
+                    logger::warn("Invalid Deny race spec: '{}'", v.pItem);
+                }
             }
         }
-
-        for (auto& item : SplitCSV(denyStr)) {
-            if (const auto id = ParseFormSpec(item); id != 0) {
-                g_cfg.denyRaces.insert(id);
-            }
-            else {
-                logger::warn("Invalid Deny race spec: '{}'", item);
-            }
-        }
-
 
         logger::info(
             "Config loaded: ShoveMagnitude={}, ShoveDuration={}, ShoveRetries={}, ShoveRetryDelayFrames={}, "

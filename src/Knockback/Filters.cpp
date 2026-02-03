@@ -110,7 +110,7 @@ namespace Knockback
         return 0;
     }
 
-    bool IsHumanoidAllowed(const RE::Actor* target)
+    bool IsValidKnockbackTarget(const RE::Actor* target)
     {
         const auto& cfg = GetConfig();
 
@@ -126,22 +126,26 @@ namespace Knockback
 
         // deny list wins
         if (cfg.denyRaces.contains(raceID)) {
+            logger::trace("Race denied for target {:08X} with race {:08X}", target ? target->GetFormID() : 0, raceID);
             return false;
         }
 
         // allow list enforced if present
         // Explicit allow list can add races (wolves, spiders, etc.)
         if (cfg.HasAllowList() && cfg.allowRaces.contains(raceID)) {
+            logger::trace("Race allowed for target {:08X} with race {:08X}", target ? target->GetFormID() : 0, raceID);
             return true;
         }
 
         // exclude big archetypes
         if (HasKW(target, g_kw.dragon) || HasKW(target, g_kw.giant)) {
+			logger::trace("Target with prohibited archetype (dragon/giant) {:08X}", target->GetFormID());
             return false;
         }
 
         // allow humanoids + undead humanoids
         if (HasKW(target, g_kw.npc) || HasKW(target, g_kw.undead)) {
+			logger::trace("Target with allowed archetype (NPC/Undead) {:08X}", target->GetFormID());
             return true;
         }
 
@@ -199,5 +203,16 @@ namespace Knockback
             }
         }
         return nullptr;
+    }
+
+    bool GetIsAttacking(RE::Actor* a)
+    {
+        bool v = false;
+        if (!a) return false;
+
+        // Try a couple common names; keep whichever works in your environment
+        if (a->IsAttacking()) return true;
+
+        return false;
     }
 }
