@@ -66,8 +66,6 @@ Unarmed = 0.85
 
 ; Leave Allow empty to use keyword-based humanoid detection (only playable races and draugr)
 [Races]
-; Leave Allow empty to use keyword-based humanoid detection (only playable races and draugr)
-
 Allow=Skyrim.esm|00109C7C ; Fox
 Allow=Skyrim.esm|00108272 ; Breton
 Allow=Skyrim.esm|0010760A ; Nord
