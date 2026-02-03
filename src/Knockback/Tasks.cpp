@@ -12,20 +12,23 @@ namespace logger = SKSE::log;
 
 namespace Knockback
 {
-    static void QueueShoveEffectivenessCheck(RE::ActorHandle aggressorH,
+    static void QueueShoveEffectivenessCheck(
+        RE::ActorHandle aggressorH,
         RE::ActorHandle targetH,
         std::int32_t remainingTries,
         float distBefore,
-        std::int32_t delayFrames)
+        std::int32_t delayFrames,
+        float weaponMult)
     {
         auto taskIf = SKSE::GetTaskInterface();
         if (!taskIf) {
             return;
         }
 
-        taskIf->AddTask([aggressorH, targetH, remainingTries, distBefore, delayFrames]() {
+        taskIf->AddTask([=]() {
             if (delayFrames > 0) {
-                QueueShoveEffectivenessCheck(aggressorH, targetH, remainingTries, distBefore, delayFrames - 1);
+                QueueShoveEffectivenessCheck(
+                    aggressorH, targetH, remainingTries, distBefore, delayFrames - 1, weaponMult);
                 return;
             }
 
@@ -41,40 +44,46 @@ namespace Knockback
             if (ShouldDisableDueToFirstPerson(aggressor)) return;
             if (!IsHumanoidAllowed(target)) return;
 
+            if (weaponMult <= 0.0f) {
+                return;
+            }
+
             const auto& cfg = GetConfig();
 
             const float distAfter = HorizontalDistance(aggressor, target);
             const float gained = distAfter - distBefore;
 
             if (gained >= cfg.minShoveSeparationDelta) {
-                logger::trace("ShoveEffect: ok (before={} after={} gained={} min={})",
-                    distBefore, distAfter, gained, cfg.minShoveSeparationDelta);
+                logger::trace(
+                    "ShoveEffect: ok before={} after={} gained={}",
+                    distBefore, distAfter, gained);
                 return;
             }
-
-            logger::trace("ShoveEffect: insufficient (before={} after={} gained={} min={}) triesLeftAfter={}",
-                distBefore, distAfter, gained, cfg.minShoveSeparationDelta, remainingTries - 1);
 
             const auto nextTries = remainingTries - 1;
             if (nextTries <= 0) {
                 return;
             }
 
-            float mag = cfg.shoveMagnitude;
+            float mag = cfg.shoveMagnitude * weaponMult;
             float dur = cfg.shoveDuration;
             ShapeForApplyCurrent(mag, dur);
 
             const bool ok = ApplyPhysicsShove(aggressor, target, mag, dur);
-            logger::trace("ShoveEffect: reapply ok={} mag={} dur={}", ok, mag, dur);
+            logger::trace(
+                "ShoveEffect: reapply ok={} mag={} dur={} mult={}",
+                ok, mag, dur, weaponMult);
 
             QueueShoveEffectivenessCheck(
                 aggressorH,
                 targetH,
                 nextTries,
                 distAfter,
-                std::max(1, cfg.shoveRetryDelayFrames));
+                std::max(1, cfg.shoveRetryDelayFrames),
+                weaponMult);
             });
     }
+
 
     void QueueEnforceMinSeparation(RE::ActorHandle aggressorH,
         RE::ActorHandle targetH,
@@ -168,7 +177,12 @@ namespace Knockback
             });
     }
 
-    void QueuePhysicsShove(RE::ActorHandle aggressorH, RE::ActorHandle targetH, std::int32_t remainingTries, std::int32_t delayFrames)
+    void QueuePhysicsShove(
+        RE::ActorHandle aggressorH,
+        RE::ActorHandle targetH,
+        std::int32_t remainingTries,
+        std::int32_t delayFrames,
+        float weaponMult)
     {
         auto taskIf = SKSE::GetTaskInterface();
         if (!taskIf) {
@@ -176,11 +190,11 @@ namespace Knockback
             return;
         }
 
-        taskIf->AddTask([aggressorH, targetH, remainingTries, delayFrames]() {
+        taskIf->AddTask([=]() {
             const auto& cfg = GetConfig();
 
             if (delayFrames > 0) {
-                QueuePhysicsShove(aggressorH, targetH, remainingTries, delayFrames - 1);
+                QueuePhysicsShove(aggressorH, targetH, remainingTries, delayFrames - 1, weaponMult);
                 return;
             }
 
@@ -203,7 +217,13 @@ namespace Knockback
                 return;
             }
 
-            float mag = cfg.shoveMagnitude;
+            // INI is authoritative: multiplier <= 0 means no shove
+            if (weaponMult <= 0.0f) {
+                logger::trace("Shove (queued): suppressed (weapon not configured)");
+                return;
+            }
+
+            float mag = cfg.shoveMagnitude * weaponMult;
             float dur = cfg.shoveDuration;
             ShapeForApplyCurrent(mag, dur);
 
@@ -211,23 +231,37 @@ namespace Knockback
             const bool ok = ApplyPhysicsShove(aggressor, target, mag, dur);
 
             if (ok) {
-                logger::trace("Shove (queued): applied (tries left after this={})", remainingTries - 1);
+                logger::trace(
+                    "Shove (queued): applied mag={} dur={} mult={} triesLeftAfter={}",
+                    mag, dur, weaponMult, remainingTries - 1);
 
                 if (cfg.minShoveSeparationDelta > 0.0f) {
-                    QueueShoveEffectivenessCheck(aggressorH, targetH, remainingTries, distBefore, /*delayFrames*/ 1);
+                    QueueShoveEffectivenessCheck(
+                        aggressorH,
+                        targetH,
+                        remainingTries,
+                        distBefore,
+                        /*delayFrames*/ 1,
+                        weaponMult);
                 }
 
                 if (cfg.enforceMinSeparation && cfg.separationRetries > 0 && IsPlayer(aggressor)) {
-                    QueueEnforceMinSeparation(aggressorH, targetH, cfg.separationRetries, cfg.separationInitialDelayFrames);
+                    QueueEnforceMinSeparation(
+                        aggressorH,
+                        targetH,
+                        cfg.separationRetries,
+                        cfg.separationInitialDelayFrames);
                 }
                 return;
             }
 
-            logger::trace("Shove (queued): failed to apply (tries left after this={})", remainingTries - 1);
+            logger::trace(
+                "Shove (queued): failed mag={} dur={} mult={} triesLeftAfter={}",
+                mag, dur, weaponMult, remainingTries - 1);
 
             const auto nextTries = remainingTries - 1;
             if (nextTries > 0) {
-                QueuePhysicsShove(aggressorH, targetH, nextTries, cfg.shoveRetryDelayFrames);
+                QueuePhysicsShove(aggressorH, targetH, nextTries, cfg.shoveRetryDelayFrames, weaponMult);
             }
             });
     }

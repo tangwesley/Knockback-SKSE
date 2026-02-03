@@ -66,11 +66,11 @@ namespace Knockback
             logger::trace(
                 "Shove: queue target={:08X} aggressor={:08X} mag={} dur={} retries={} delayFrames={} DisableInFirstPerson={}",
                 target->GetFormID(), aggressor->GetFormID(),
-                cfg.shoveMagnitude, cfg.shoveDuration,
+                cfg.shoveMagnitude * GetWeaponMultiplier(weap), cfg.shoveDuration,
                 cfg.shoveRetries, cfg.shoveRetryDelayFrames,
                 cfg.disableInFirstPerson);
 
-            QueuePhysicsShove(aggressor->GetHandle(), target->GetHandle(), cfg.shoveRetries, cfg.shoveInitialDelayFrames);
+            QueuePhysicsShove(aggressor->GetHandle(), target->GetHandle(), cfg.shoveRetries, cfg.shoveInitialDelayFrames, GetWeaponMultiplier(weap));
             return RE::BSEventNotifyControl::kContinue;
         }
     };

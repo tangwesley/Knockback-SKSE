@@ -42,6 +42,11 @@ namespace Knockback
         std::int32_t separationInitialDelayFrames{ 1 };
         std::int32_t separationRetryDelayFrames{ 1 };
 
+        // WeaponType magnitude multipliers
+        std::unordered_map<RE::FormID, float> weaponTypeMultipliers;
+		std::unordered_map<RE::BGSKeyword*, float> weaponTypeKeywordMultipliers;
+		float unarmedMultiplier{ 0.85f };
+
         bool HasAllowList() const { return !allowRaces.empty(); }
     };
 

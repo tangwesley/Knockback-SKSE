@@ -175,6 +175,83 @@ namespace Knockback
         if (g_cfg.shoveRetryDelayFrames < 0) g_cfg.shoveRetryDelayFrames = 0;
         if (g_cfg.shoveRetryDelayFrames > 10) g_cfg.shoveRetryDelayFrames = 10;
 
+
+        // ============================================================
+        // Weapon multipliers
+        // ============================================================
+
+        // Clear any defaults populated by Config{} construction if you want ini-only behavior.
+        // If you want defaults to remain when section is missing, keep the defaults and only override what is present.
+        g_cfg.weaponTypeMultipliers.clear();
+        g_cfg.weaponTypeKeywordMultipliers.clear();
+
+        // "Unarmed" is a plain key in your INI.
+        g_cfg.unarmedMultiplier = static_cast<float>(
+            ini.GetDoubleValue("WeaponMultipliers", "Unarmed", g_cfg.unarmedMultiplier));
+
+        // Iterate all keys under [WeaponMultipliers]
+        CSimpleIniA::TNamesDepend keys;
+        ini.GetAllKeys("WeaponMultipliers", keys);
+
+        std::size_t parsed = 0;
+        std::size_t resolved = 0;
+
+        for (const auto& k : keys) {
+            if (!k.pItem) {
+                continue;
+            }
+
+            std::string_view key{ k.pItem };
+
+            // Skip Unarmed since it's not a FormSpec
+            if (_stricmp(key.data(), "Unarmed") == 0) {
+                continue;
+            }
+
+            const char* valStr = ini.GetValue("WeaponMultipliers", k.pItem, nullptr);
+            if (!valStr) {
+                continue;
+            }
+
+            float mult = 1.0f;
+            try {
+                mult = std::stof(valStr);
+            }
+            catch (...) {
+                logger::warn("[WeaponMultipliers] Invalid multiplier value '{}' for key '{}'", valStr, k.pItem);
+                continue;
+            }
+
+            if (!(mult > 0.0f)) {
+                logger::warn("[WeaponMultipliers] Multiplier must be > 0.0. Key='{}' Value={}", k.pItem, mult);
+                continue;
+            }
+
+            const auto formID = ParseFormSpec(std::string(key));
+            if (formID == 0) {
+                logger::warn("[WeaponMultipliers] Invalid keyword spec '{}'", k.pItem);
+                continue;
+            }
+
+            ++parsed;
+
+            // Keep FormID map too (useful for debugging / reload)
+            g_cfg.weaponTypeMultipliers[formID] = mult;
+
+            // Resolve to keyword*
+            auto* kw = RE::TESForm::LookupByID<RE::BGSKeyword>(formID);
+            if (!kw) {
+                logger::warn("[WeaponMultipliers] FormID {:08X} ('{}') did not resolve to a BGSKeyword", formID, k.pItem);
+                continue;
+            }
+
+            g_cfg.weaponTypeKeywordMultipliers[kw] = mult;
+            ++resolved;
+        }
+
+		// ============================================================
+        // Races
+		// ============================================================
         const char* allowStr = ini.GetValue("Races", "Allow", "");
         const char* denyStr = ini.GetValue("Races", "Deny", "");
 
@@ -196,11 +273,14 @@ namespace Knockback
             }
         }
 
+
         logger::info(
             "Config loaded: ShoveMagnitude={}, ShoveDuration={}, ShoveRetries={}, ShoveRetryDelayFrames={}, "
-            "ShoveInitialDelayFrames={}, MinShoveSeparationDelta={}, DisableInFirstPerson={}, AllowRaces={}, DenyRaces={}",
+            "ShoveInitialDelayFrames={}, MinShoveSeparationDelta={}, DisableInFirstPerson={}, AllowRaces={}, DenyRaces={}, "
+            "WeaponMults(parsed={}, resolvedKeywords={}, unarmed={})",
             g_cfg.shoveMagnitude, g_cfg.shoveDuration, g_cfg.shoveRetries, g_cfg.shoveRetryDelayFrames,
             g_cfg.shoveInitialDelayFrames, g_cfg.minShoveSeparationDelta,
-            g_cfg.disableInFirstPerson, g_cfg.allowRaces.size(), g_cfg.denyRaces.size());
+            g_cfg.disableInFirstPerson, g_cfg.allowRaces.size(), g_cfg.denyRaces.size(),
+            parsed, resolved, g_cfg.unarmedMultiplier);
     }
 }

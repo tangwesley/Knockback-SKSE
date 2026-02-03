@@ -10,17 +10,16 @@ namespace Knockback
 {
     // Keyword helpers (fallback heuristic)
     constexpr RE::FormID kKW_ActorTypeNPC = 0x00013794;               // ActorTypeNPC
-    constexpr RE::FormID kKW_ActorTypeUndead = 0x00013795;            // ActorTypeUndead
-    constexpr RE::FormID kKW_ActorTypeDragon = 0x00013796;            // ActorTypeDragon
-    constexpr RE::FormID kKW_ActorTypeGiant = 0x00013797;             // ActorTypeGiant
-    constexpr RE::FormID kKW_ActorTypeDwarvenAutomaton = 0x00013798;  // ActorTypeDwarvenAutomaton
+    constexpr RE::FormID kKW_ActorTypeUndead = 0x00013796;            // ActorTypeUndead
+    constexpr RE::FormID kKW_ActorTypeDragon = 0x00035D59;            // ActorTypeDragon
+    constexpr RE::FormID kKW_ActorTypeGiant = 0x0010E984;             // ActorTypeGiant
 
     struct KeywordCache {
         RE::BGSKeyword* npc{ nullptr };
         RE::BGSKeyword* undead{ nullptr };
+        RE::BGSKeyword* falmer{ nullptr };
         RE::BGSKeyword* dragon{ nullptr };
         RE::BGSKeyword* giant{ nullptr };
-        RE::BGSKeyword* dwarvenAuto{ nullptr };
 
         void Init()
         {
@@ -28,7 +27,6 @@ namespace Knockback
             undead = RE::TESForm::LookupByID<RE::BGSKeyword>(kKW_ActorTypeUndead);
             dragon = RE::TESForm::LookupByID<RE::BGSKeyword>(kKW_ActorTypeDragon);
             giant = RE::TESForm::LookupByID<RE::BGSKeyword>(kKW_ActorTypeGiant);
-            dwarvenAuto = RE::TESForm::LookupByID<RE::BGSKeyword>(kKW_ActorTypeDwarvenAutomaton);
         }
     };
 
@@ -150,25 +148,31 @@ namespace Knockback
         return false;
     }
 
-    bool IsMeleeWeapon(const RE::TESObjectWEAP* weap)
+    float GetWeaponMultiplier(const RE::TESObjectWEAP* weap)
     {
-        if (!weap) {
-            return false;
+        const auto& cfg = Knockback::GetConfig();
+
+        if (!weap || weap->GetWeaponType() == RE::WEAPON_TYPE::kHandToHandMelee) {
+            return cfg.unarmedMultiplier;
         }
 
-        const auto type = weap->GetWeaponType();
-        switch (type) {
-        case RE::WEAPON_TYPE::kOneHandSword:
-        case RE::WEAPON_TYPE::kOneHandDagger:
-        case RE::WEAPON_TYPE::kOneHandAxe:
-        case RE::WEAPON_TYPE::kOneHandMace:
-        case RE::WEAPON_TYPE::kTwoHandSword:
-        case RE::WEAPON_TYPE::kTwoHandAxe:
-        case RE::WEAPON_TYPE::kHandToHandMelee:
-            return true;
-        default:
-            return false;
+        float best = 0.0f;
+        for (const auto& [kw, mult] : cfg.weaponTypeKeywordMultipliers) {
+            if (kw && weap->HasKeyword(kw)) {
+                best = std::max(best, mult);
+            }
         }
+        return best;
+    }
+
+    bool IsMeleeWeapon(const RE::TESObjectWEAP* weap)
+    {
+        // "melee" means: it matches any configured keyword, or unarmed is enabled.
+        if (!weap || weap->GetWeaponType() == RE::WEAPON_TYPE::kHandToHandMelee) {
+            return Knockback::GetConfig().unarmedMultiplier > 0.0f;
+        }
+
+        return GetWeaponMultiplier(weap) != 0.0f;
     }
 
     bool IsMagicSource(RE::FormID sourceID)

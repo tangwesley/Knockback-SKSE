@@ -11,6 +11,7 @@ namespace Knockback
 
     bool IsHumanoidAllowed(const RE::Actor* target);
 
+    float GetWeaponMultiplier(const RE::TESObjectWEAP* weap);
     bool IsMeleeWeapon(const RE::TESObjectWEAP* weap);
     bool IsMagicSource(RE::FormID sourceID);
 
