@@ -49,7 +49,17 @@ Skyrim.esm|0001E712 = 1.00	 ; WeapTypeWarAxe
 Skyrim.esm|0006D932 = 1.00   ; WeapTypeBattleAxe
 Skyrim.esm|0001E714 = 1.00   ; WeapTypeMace
 Skyrim.esm|0006D930 = 1.00   ; WeapTypeWarhammer
+NewArmoury.esp|00000801 = 1.00	; WeapTypeRapier
+NewArmoury.esp|000E457E = 1.00	; WeapTypePike
+NewArmoury.esp|000E457F = 1.00	; WeapTypeSpear
+NewArmoury.esp|000E4580 = 1.00	; WeapTypeHalberd
+NewArmoury.esp|000E4581 = 1.00	; WeapTypeQtrStaff
+NewArmoury.esp|0019AAB3 = 1.00	; WeapTypeCestus
+NewArmoury.esp|0019AAB4 = 1.00	; WeapTypeClaw
+NewArmoury.esp|0031BD77 = 1.00	; WeapTypeWhip
+NewArmoury.esp|00344733 = 1.00	; WeapTypeKatana
 Unarmed = 0.85
+PowerAttack = 1.20
 
 [Races]
 ; ==========================================================

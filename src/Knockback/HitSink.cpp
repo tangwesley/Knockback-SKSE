@@ -70,10 +70,15 @@ namespace Knockback
 
             const auto& cfg = GetConfig();
 
+            float powerMult = 1.0f;
+            if (a_event->flags.any(RE::TESHitEvent::Flag::kPowerAttack)) {
+                powerMult = cfg.powerAttackMultiplier;  // add this to config/ini
+            }
+
             logger::trace(
                 "Shove: queue target={:08X} aggressor={:08X} mag={} dur={} retries={} delayFrames={} DisableInFirstPerson={}",
                 target->GetFormID(), aggressor->GetFormID(),
-                cfg.shoveMagnitude * weaponMult, cfg.shoveDuration,
+                cfg.shoveMagnitude * weaponMult * powerMult, cfg.shoveDuration,
                 cfg.shoveRetries, cfg.shoveRetryDelayFrames,
                 cfg.disableInFirstPerson);
 
@@ -81,7 +86,7 @@ namespace Knockback
                 aggressor->GetHandle(),
                 target->GetHandle(),
                 cfg.shoveRetries,
-                weaponMult,
+                weaponMult * powerMult,
 				20);
             
             return RE::BSEventNotifyControl::kContinue;

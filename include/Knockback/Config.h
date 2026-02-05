@@ -46,7 +46,7 @@ namespace Knockback
         std::unordered_map<RE::FormID, float> weaponTypeMultipliers;
 		std::unordered_map<RE::BGSKeyword*, float> weaponTypeKeywordMultipliers;
 		float unarmedMultiplier{ 0.85f };
-
+		float powerAttackMultiplier{ 1.2f };
         bool HasAllowList() const { return !allowRaces.empty(); }
     };
 

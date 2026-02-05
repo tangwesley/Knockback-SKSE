@@ -219,6 +219,8 @@ namespace Knockback
             // Unarmed base from legacy (can be overridden later by MCM)
             tmp.unarmedMultiplier = static_cast<float>(
                 legacyIni.GetDoubleValue("WeaponMultipliers", "Unarmed", tmp.unarmedMultiplier));
+            tmp.powerAttackMultiplier = static_cast<float>(
+                legacyIni.GetDoubleValue("WeaponMultipliers", "PowerAttack", tmp.powerAttackMultiplier));
 
             CSimpleIniA::TNamesDepend keys;
             legacyIni.GetAllKeys("WeaponMultipliers", keys);
@@ -228,6 +230,7 @@ namespace Knockback
 
                 std::string_view key{ k.pItem };
                 if (_stricmp(key.data(), "Unarmed") == 0) continue;
+                if (_stricmp(key.data(), "PowerAttack") == 0) continue;
 
                 const char* valStr = legacyIni.GetValue("WeaponMultipliers", k.pItem, nullptr);
                 if (!valStr) continue;
@@ -311,7 +314,7 @@ namespace Knockback
             tmp.separationInitialDelayFrames = getInt("General", "iSeparationInitialDelayFrames", "SeparationInitialDelayFrames", tmp.separationInitialDelayFrames);
             tmp.separationRetryDelayFrames = getInt("General", "iSeparationRetryDelayFrames", "SeparationRetryDelayFrames", tmp.separationRetryDelayFrames);
 
-            // Unarmed override ONLY
+            // Unarmed and PowerAttack override ONLY
             if (mcmIni.KeyExists("WeaponMultipliers", "fUnarmed")) {
                 tmp.unarmedMultiplier = static_cast<float>(
                     mcmIni.GetDoubleValue("WeaponMultipliers", "fUnarmed", tmp.unarmedMultiplier));
@@ -319,6 +322,14 @@ namespace Knockback
             else if (mcmIni.KeyExists("WeaponMultipliers", "Unarmed")) {
                 tmp.unarmedMultiplier = static_cast<float>(
                     mcmIni.GetDoubleValue("WeaponMultipliers", "Unarmed", tmp.unarmedMultiplier));
+            }
+            if (mcmIni.KeyExists("WeaponMultipliers", "fPowerAttack")) {
+                tmp.powerAttackMultiplier = static_cast<float>(
+                    mcmIni.GetDoubleValue("WeaponMultipliers", "fPowerAttack", tmp.unarmedMultiplier));
+            }
+            else if (mcmIni.KeyExists("WeaponMultipliers", "PowerAttack")) {
+                tmp.powerAttackMultiplier = static_cast<float>(
+                    mcmIni.GetDoubleValue("WeaponMultipliers", "PowerAttack", tmp.unarmedMultiplier));
             }
         }
 
@@ -331,10 +342,10 @@ namespace Knockback
 
         // Watcher state: you should watch BOTH files (see next note)
         g_lastPath.clear(); // optional: stop using single-path watcher
-        logger::info("Config loaded. Legacy={} MCM={} WeaponMults(parsed={}, resolvedKeywords={}, unarmed={})",
+        logger::info("Config loaded. Legacy={} MCM={} WeaponMults(parsed={}, resolvedKeywords={}, unarmed={}, powerAttack={})",
             haveLegacy ? legacyPath : "(none)",
             haveMcm ? mcmPath : "(none)",
-            parsed, resolved, g_cfg.unarmedMultiplier);
+            parsed, resolved, g_cfg.unarmedMultiplier, g_cfg.powerAttackMultiplier);
     }
 
     void MaybeReloadConfig()
