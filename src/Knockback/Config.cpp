@@ -11,12 +11,24 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <filesystem>
+
 
 namespace logger = SKSE::log;
 
 namespace Knockback
 {
     static Config g_cfg{};
+    namespace fs = std::filesystem;
+
+    static std::mutex g_cfgMutex{};
+    static fs::file_time_type g_lastWriteTime{};
+    static std::string g_lastPath{};
+    static std::chrono::steady_clock::time_point g_lastCheck{}; 
+    static fs::file_time_type g_lastLegacyWriteTime{};
+    static fs::file_time_type g_lastMcmWriteTime{};
+    static bool g_lastLegacyExists{ false };
+    static bool g_lastMcmExists{ false };
 
     const Config& GetConfig()
     {
@@ -78,6 +90,31 @@ namespace Knockback
         return hex;
     }
 
+    static bool LoadIniFile(CSimpleIniA& ini, const std::string& path)
+    {
+        ini.Reset();
+        ini.SetUnicode();
+        ini.SetMultiKey();
+        return ini.LoadFile(path.c_str()) >= 0;
+    }
+
+    static std::string GetMcmSettingsPath()
+    {
+        constexpr std::string_view kMcmModName = "KnockbackMCM";
+        return std::format("Data\\MCM\\Settings\\{}.ini", kMcmModName);
+    }
+
+    static std::string GetLegacyPath(std::string_view pluginName)
+    {
+        // Your “always load” file name:
+        // If you want it hard-coded to KnockbackPlugin.ini, do this:
+        return "Data\\SKSE\\Plugins\\KnockbackPlugin.ini";
+
+        // Or if you want “same name as dll” legacy behavior:
+        // return std::format("Data\\SKSE\\Plugins\\{}.ini", pluginName);
+    }
+
+
     static RE::FormID ParseFormSpec(const std::string& spec)
     {
         const auto cleaned = StripIniComment(spec);
@@ -115,178 +152,276 @@ namespace Knockback
 
     void LoadConfig()
     {
-        g_cfg = Config{};
+        Config tmp{};
 
         const auto pluginName = SKSE::PluginDeclaration::GetSingleton()->GetName();
-        const auto iniPath = std::format("Data\\SKSE\\Plugins\\{}.ini", pluginName);
+        const auto legacyPath = GetLegacyPath(pluginName);
+        const auto mcmPath = GetMcmSettingsPath();
 
-        CSimpleIniA ini;
-        ini.SetUnicode();
-        ini.SetMultiKey();
+        CSimpleIniA legacyIni;
+        CSimpleIniA mcmIni;
 
-        const auto rc = ini.LoadFile(iniPath.c_str());
-        if (rc < 0) {
-            logger::warn("Config not found or failed to load: {}", iniPath);
-            logger::warn(
-                "Using defaults (ShoveMagnitude={}, ShoveDuration={}, ShoveRetries={}, ShoveRetryDelayFrames={}, DisableInFirstPerson={})",
-                g_cfg.shoveMagnitude, g_cfg.shoveDuration, g_cfg.shoveRetries, g_cfg.shoveRetryDelayFrames, g_cfg.disableInFirstPerson);
-            return;
+        const bool haveLegacy = fs::exists(legacyPath) && LoadIniFile(legacyIni, legacyPath);
+        const bool haveMcm = fs::exists(mcmPath) && LoadIniFile(mcmIni, mcmPath);
+
+        if (!haveLegacy) {
+            logger::warn("Legacy config not found or failed to load: {}", legacyPath);
+            logger::warn("Using compiled defaults for advanced lists (WeaponMultipliers/Races).");
+        }
+        else {
+            logger::info("Loaded legacy config: {}", legacyPath);
         }
 
-        g_cfg.shoveMagnitude = static_cast<float>(ini.GetDoubleValue("General", "ShoveMagnitude", g_cfg.shoveMagnitude));
-        g_cfg.shoveDuration = static_cast<float>(ini.GetDoubleValue("General", "ShoveDuration", g_cfg.shoveDuration));
+        if (haveMcm) {
+            logger::info("Loaded MCM settings: {}", mcmPath);
+        }
+        else {
+            logger::info("MCM settings not present yet: {}", mcmPath);
+        }
 
-        g_cfg.shoveRetries = static_cast<std::int32_t>(ini.GetLongValue("General", "ShoveRetries", g_cfg.shoveRetries));
-        g_cfg.shoveRetryDelayFrames = static_cast<std::int32_t>(ini.GetLongValue("General", "ShoveRetryDelayFrames", g_cfg.shoveRetryDelayFrames));
+        // -----------------------------
+        // 1) Apply LEGACY (base layer)
+        // -----------------------------
+        auto& iniBase = haveLegacy ? legacyIni : mcmIni; // fallback if you *only* have MCM (rare)
 
-        g_cfg.shoveInitialDelayFrames = static_cast<std::int32_t>(ini.GetLongValue("General", "ShoveInitialDelayFrames", g_cfg.shoveInitialDelayFrames));
-        g_cfg.minShoveSeparationDelta = static_cast<float>(ini.GetDoubleValue("General", "MinShoveSeparationDelta", g_cfg.minShoveSeparationDelta));
+        // General from legacy (non-prefixed keys)
+        if (haveLegacy) {
+            tmp.shoveMagnitude = static_cast<float>(legacyIni.GetDoubleValue("General", "ShoveMagnitude", tmp.shoveMagnitude));
+            tmp.shoveDuration = static_cast<float>(legacyIni.GetDoubleValue("General", "ShoveDuration", tmp.shoveDuration));
 
-        g_cfg.disableInFirstPerson = ini.GetBoolValue("General", "DisableInFirstPerson", g_cfg.disableInFirstPerson);
-        g_cfg.applyCurrentMinVelocity = static_cast<float>(ini.GetDoubleValue("General", "ApplyCurrentMinVelocity", g_cfg.applyCurrentMinVelocity));
-        g_cfg.minDurationScale = static_cast<float>(ini.GetDoubleValue("General", "MinDurationScale", g_cfg.minDurationScale));
+            tmp.shoveRetries = static_cast<std::int32_t>(legacyIni.GetLongValue("General", "ShoveRetries", tmp.shoveRetries));
+            tmp.shoveRetryDelayFrames = static_cast<std::int32_t>(legacyIni.GetLongValue("General", "ShoveRetryDelayFrames", tmp.shoveRetryDelayFrames));
 
-        g_cfg.enforceMinSeparation = ini.GetBoolValue("General", "EnforceMinSeparation", g_cfg.enforceMinSeparation);
-        g_cfg.minSeparationDistance = static_cast<float>(ini.GetDoubleValue("General", "MinSeparationDistance", g_cfg.minSeparationDistance));
-        g_cfg.separationPushDuration = static_cast<float>(ini.GetDoubleValue("General", "SeparationPushDuration", g_cfg.separationPushDuration));
-        g_cfg.separationMaxVelocity = static_cast<float>(ini.GetDoubleValue("General", "SeparationMaxVelocity", g_cfg.separationMaxVelocity));
-        g_cfg.separationRetries = static_cast<std::int32_t>(ini.GetLongValue("General", "SeparationRetries", g_cfg.separationRetries));
-        g_cfg.separationInitialDelayFrames = static_cast<std::int32_t>(ini.GetLongValue("General", "SeparationInitialDelayFrames", g_cfg.separationInitialDelayFrames));
-        g_cfg.separationRetryDelayFrames = static_cast<std::int32_t>(ini.GetLongValue("General", "SeparationRetryDelayFrames", g_cfg.separationRetryDelayFrames));
+            tmp.shoveInitialDelayFrames = static_cast<std::int32_t>(legacyIni.GetLongValue("General", "ShoveInitialDelayFrames", tmp.shoveInitialDelayFrames));
+            tmp.minShoveSeparationDelta = static_cast<float>(legacyIni.GetDoubleValue("General", "MinShoveSeparationDelta", tmp.minShoveSeparationDelta));
 
-        // clamps
-        if (g_cfg.minSeparationDistance < 0.0f) g_cfg.minSeparationDistance = 0.0f;
-        if (g_cfg.separationPushDuration < 0.01f) g_cfg.separationPushDuration = 0.01f;
-        if (g_cfg.separationMaxVelocity < 0.0f) g_cfg.separationMaxVelocity = 0.0f;
+            tmp.disableInFirstPerson = legacyIni.GetBoolValue("General", "DisableInFirstPerson", tmp.disableInFirstPerson);
+            tmp.applyCurrentMinVelocity = static_cast<float>(legacyIni.GetDoubleValue("General", "ApplyCurrentMinVelocity", tmp.applyCurrentMinVelocity));
+            tmp.minDurationScale = static_cast<float>(legacyIni.GetDoubleValue("General", "MinDurationScale", tmp.minDurationScale));
 
-        g_cfg.separationRetries = std::clamp(g_cfg.separationRetries, 0, 20);
-        g_cfg.separationInitialDelayFrames = std::clamp(g_cfg.separationInitialDelayFrames, 0, 10);
-        g_cfg.separationRetryDelayFrames = std::clamp(g_cfg.separationRetryDelayFrames, 1, 10);
+            tmp.enforceMinSeparation = legacyIni.GetBoolValue("General", "EnforceMinSeparation", tmp.enforceMinSeparation);
+            tmp.minSeparationDistance = static_cast<float>(legacyIni.GetDoubleValue("General", "MinSeparationDistance", tmp.minSeparationDistance));
+            tmp.separationPushDuration = static_cast<float>(legacyIni.GetDoubleValue("General", "SeparationPushDuration", tmp.separationPushDuration));
+            tmp.separationMaxVelocity = static_cast<float>(legacyIni.GetDoubleValue("General", "SeparationMaxVelocity", tmp.separationMaxVelocity));
+            tmp.separationRetries = static_cast<std::int32_t>(legacyIni.GetLongValue("General", "SeparationRetries", tmp.separationRetries));
+            tmp.separationInitialDelayFrames = static_cast<std::int32_t>(legacyIni.GetLongValue("General", "SeparationInitialDelayFrames", tmp.separationInitialDelayFrames));
+            tmp.separationRetryDelayFrames = static_cast<std::int32_t>(legacyIni.GetLongValue("General", "SeparationRetryDelayFrames", tmp.separationRetryDelayFrames));
+        }
 
-        g_cfg.shoveInitialDelayFrames = std::clamp(g_cfg.shoveInitialDelayFrames, 0, 10);
-        if (g_cfg.minShoveSeparationDelta < 0.0f) g_cfg.minShoveSeparationDelta = 0.0f;
-
-        if (g_cfg.applyCurrentMinVelocity < 0.0f) g_cfg.applyCurrentMinVelocity = 0.0f;
-        if (g_cfg.minDurationScale < 0.0f) g_cfg.minDurationScale = 0.0f;
-        if (g_cfg.minDurationScale > 1.0f) g_cfg.minDurationScale = 1.0f;
-
-        if (g_cfg.shoveRetries < 1) g_cfg.shoveRetries = 1;
-        if (g_cfg.shoveRetries > 10) g_cfg.shoveRetries = 10;
-        if (g_cfg.shoveRetryDelayFrames < 0) g_cfg.shoveRetryDelayFrames = 0;
-        if (g_cfg.shoveRetryDelayFrames > 10) g_cfg.shoveRetryDelayFrames = 10;
-
-
-        // ============================================================
-        // Weapon multipliers
-        // ============================================================
-
-        // Clear any defaults populated by Config{} construction if you want ini-only behavior.
-        // If you want defaults to remain when section is missing, keep the defaults and only override what is present.
-        g_cfg.weaponTypeMultipliers.clear();
-        g_cfg.weaponTypeKeywordMultipliers.clear();
-
-        // "Unarmed" is a plain key in your INI.
-        g_cfg.unarmedMultiplier = static_cast<float>(
-            ini.GetDoubleValue("WeaponMultipliers", "Unarmed", g_cfg.unarmedMultiplier));
-
-        // Iterate all keys under [WeaponMultipliers]
-        CSimpleIniA::TNamesDepend keys;
-        ini.GetAllKeys("WeaponMultipliers", keys);
-
+        // Weapon multipliers + races ALWAYS from legacy
         std::size_t parsed = 0;
         std::size_t resolved = 0;
 
-        for (const auto& k : keys) {
-            if (!k.pItem) {
-                continue;
+        if (haveLegacy) {
+            tmp.weaponTypeMultipliers.clear();
+            tmp.weaponTypeKeywordMultipliers.clear();
+
+            // Unarmed base from legacy (can be overridden later by MCM)
+            tmp.unarmedMultiplier = static_cast<float>(
+                legacyIni.GetDoubleValue("WeaponMultipliers", "Unarmed", tmp.unarmedMultiplier));
+
+            CSimpleIniA::TNamesDepend keys;
+            legacyIni.GetAllKeys("WeaponMultipliers", keys);
+
+            for (const auto& k : keys) {
+                if (!k.pItem) continue;
+
+                std::string_view key{ k.pItem };
+                if (_stricmp(key.data(), "Unarmed") == 0) continue;
+
+                const char* valStr = legacyIni.GetValue("WeaponMultipliers", k.pItem, nullptr);
+                if (!valStr) continue;
+
+                float mult = 1.0f;
+                try { mult = std::stof(valStr); }
+                catch (...) { continue; }
+
+                if (!(mult > 0.0f)) continue;
+
+                const auto formID = ParseFormSpec(std::string(key));
+                if (!formID) continue;
+
+                ++parsed;
+                tmp.weaponTypeMultipliers[formID] = mult;
+
+                auto* kw = RE::TESForm::LookupByID<RE::BGSKeyword>(formID);
+                if (!kw) continue;
+
+                tmp.weaponTypeKeywordMultipliers[kw] = mult;
+                ++resolved;
             }
 
-            std::string_view key{ k.pItem };
+            // Races
+            {
+                CSimpleIniA::TNamesDepend allowVals;
+                CSimpleIniA::TNamesDepend denyVals;
 
-            // Skip Unarmed since it's not a FormSpec
-            if (_stricmp(key.data(), "Unarmed") == 0) {
-                continue;
-            }
+                legacyIni.GetAllValues("Races", "Allow", allowVals);
+                legacyIni.GetAllValues("Races", "Deny", denyVals);
 
-            const char* valStr = ini.GetValue("WeaponMultipliers", k.pItem, nullptr);
-            if (!valStr) {
-                continue;
-            }
-
-            float mult = 1.0f;
-            try {
-                mult = std::stof(valStr);
-            }
-            catch (...) {
-                logger::warn("[WeaponMultipliers] Invalid multiplier value '{}' for key '{}'", valStr, k.pItem);
-                continue;
-            }
-
-            if (!(mult > 0.0f)) {
-                logger::warn("[WeaponMultipliers] Multiplier must be > 0.0. Key='{}' Value={}", k.pItem, mult);
-                continue;
-            }
-
-            const auto formID = ParseFormSpec(std::string(key));
-            if (formID == 0) {
-                logger::warn("[WeaponMultipliers] Invalid keyword spec '{}'", k.pItem);
-                continue;
-            }
-
-            ++parsed;
-
-            // Keep FormID map too (useful for debugging / reload)
-            g_cfg.weaponTypeMultipliers[formID] = mult;
-
-            // Resolve to keyword*
-            auto* kw = RE::TESForm::LookupByID<RE::BGSKeyword>(formID);
-            if (!kw) {
-                logger::warn("[WeaponMultipliers] FormID {:08X} ('{}') did not resolve to a BGSKeyword", formID, k.pItem);
-                continue;
-            }
-
-            g_cfg.weaponTypeKeywordMultipliers[kw] = mult;
-            ++resolved;
-        }
-
-		// ============================================================
-        // Races
-		// ============================================================
-        {
-            CSimpleIniA::TNamesDepend allowVals;
-            CSimpleIniA::TNamesDepend denyVals;
-
-            ini.GetAllValues("Races", "Allow", allowVals);
-            ini.GetAllValues("Races", "Deny", denyVals);
-
-            for (const auto& v : allowVals) {
-                if (!v.pItem) continue;
-                if (const auto id = ParseFormSpec(v.pItem); id != 0) {
-                    g_cfg.allowRaces.insert(id);
+                for (const auto& v : allowVals) {
+                    if (!v.pItem) continue;
+                    if (const auto id = ParseFormSpec(v.pItem); id != 0) tmp.allowRaces.insert(id);
                 }
-                else {
-                    logger::warn("Invalid Allow race spec: '{}'", v.pItem);
-                }
-            }
-
-            for (const auto& v : denyVals) {
-                if (!v.pItem) continue;
-                if (const auto id = ParseFormSpec(v.pItem); id != 0) {
-                    g_cfg.denyRaces.insert(id);
-                }
-                else {
-                    logger::warn("Invalid Deny race spec: '{}'", v.pItem);
+                for (const auto& v : denyVals) {
+                    if (!v.pItem) continue;
+                    if (const auto id = ParseFormSpec(v.pItem); id != 0) tmp.denyRaces.insert(id);
                 }
             }
         }
 
-        logger::info(
-            "Config loaded: ShoveMagnitude={}, ShoveDuration={}, ShoveRetries={}, ShoveRetryDelayFrames={}, "
-            "ShoveInitialDelayFrames={}, MinShoveSeparationDelta={}, DisableInFirstPerson={}, AllowRaces={}, DenyRaces={}, "
-            "WeaponMults(parsed={}, resolvedKeywords={}, unarmed={})",
-            g_cfg.shoveMagnitude, g_cfg.shoveDuration, g_cfg.shoveRetries, g_cfg.shoveRetryDelayFrames,
-            g_cfg.shoveInitialDelayFrames, g_cfg.minShoveSeparationDelta,
-            g_cfg.disableInFirstPerson, g_cfg.allowRaces.size(), g_cfg.denyRaces.size(),
+        // -----------------------------
+        // 2) Apply MCM overrides (General + Unarmed ONLY)
+        // -----------------------------
+        if (haveMcm) {
+            auto getFloat = [&](const char* section, const char* keyNew, const char* keyOld, float cur) -> float {
+                if (mcmIni.KeyExists(section, keyNew)) return static_cast<float>(mcmIni.GetDoubleValue(section, keyNew, cur));
+                if (mcmIni.KeyExists(section, keyOld)) return static_cast<float>(mcmIni.GetDoubleValue(section, keyOld, cur));
+                return cur;
+                };
+            auto getInt = [&](const char* section, const char* keyNew, const char* keyOld, std::int32_t cur) -> std::int32_t {
+                if (mcmIni.KeyExists(section, keyNew)) return static_cast<std::int32_t>(mcmIni.GetLongValue(section, keyNew, cur));
+                if (mcmIni.KeyExists(section, keyOld)) return static_cast<std::int32_t>(mcmIni.GetLongValue(section, keyOld, cur));
+                return cur;
+                };
+            auto getBool = [&](const char* section, const char* keyNew, const char* keyOld, bool cur) -> bool {
+                if (mcmIni.KeyExists(section, keyNew)) return mcmIni.GetBoolValue(section, keyNew, cur);
+                if (mcmIni.KeyExists(section, keyOld)) return mcmIni.GetBoolValue(section, keyOld, cur);
+                return cur;
+                };
+
+            tmp.shoveMagnitude = getFloat("General", "fShoveMagnitude", "ShoveMagnitude", tmp.shoveMagnitude);
+            tmp.shoveDuration = getFloat("General", "fShoveDuration", "ShoveDuration", tmp.shoveDuration);
+
+            tmp.shoveRetries = getInt("General", "iShoveRetries", "ShoveRetries", tmp.shoveRetries);
+            tmp.shoveRetryDelayFrames = getInt("General", "iShoveRetryDelayFrames", "ShoveRetryDelayFrames", tmp.shoveRetryDelayFrames);
+
+            tmp.shoveInitialDelayFrames = getInt("General", "iShoveInitialDelayFrames", "ShoveInitialDelayFrames", tmp.shoveInitialDelayFrames);
+            tmp.minShoveSeparationDelta = getFloat("General", "fMinShoveSeparationDelta", "MinShoveSeparationDelta", tmp.minShoveSeparationDelta);
+
+            tmp.disableInFirstPerson = getBool("General", "bDisableInFirstPerson", "DisableInFirstPerson", tmp.disableInFirstPerson);
+            tmp.applyCurrentMinVelocity = getFloat("General", "fApplyCurrentMinVelocity", "ApplyCurrentMinVelocity", tmp.applyCurrentMinVelocity);
+            tmp.minDurationScale = getFloat("General", "fMinDurationScale", "MinDurationScale", tmp.minDurationScale);
+
+            tmp.enforceMinSeparation = getBool("General", "bEnforceMinSeparation", "EnforceMinSeparation", tmp.enforceMinSeparation);
+            tmp.minSeparationDistance = getFloat("General", "fMinSeparationDistance", "MinSeparationDistance", tmp.minSeparationDistance);
+            tmp.separationPushDuration = getFloat("General", "fSeparationPushDuration", "SeparationPushDuration", tmp.separationPushDuration);
+            tmp.separationMaxVelocity = getFloat("General", "fSeparationMaxVelocity", "SeparationMaxVelocity", tmp.separationMaxVelocity);
+            tmp.separationRetries = getInt("General", "iSeparationRetries", "SeparationRetries", tmp.separationRetries);
+            tmp.separationInitialDelayFrames = getInt("General", "iSeparationInitialDelayFrames", "SeparationInitialDelayFrames", tmp.separationInitialDelayFrames);
+            tmp.separationRetryDelayFrames = getInt("General", "iSeparationRetryDelayFrames", "SeparationRetryDelayFrames", tmp.separationRetryDelayFrames);
+
+            // Unarmed override ONLY
+            if (mcmIni.KeyExists("WeaponMultipliers", "fUnarmed")) {
+                tmp.unarmedMultiplier = static_cast<float>(
+                    mcmIni.GetDoubleValue("WeaponMultipliers", "fUnarmed", tmp.unarmedMultiplier));
+            }
+            else if (mcmIni.KeyExists("WeaponMultipliers", "Unarmed")) {
+                tmp.unarmedMultiplier = static_cast<float>(
+                    mcmIni.GetDoubleValue("WeaponMultipliers", "Unarmed", tmp.unarmedMultiplier));
+            }
+        }
+
+        // clamps (keep yours)
+        if (tmp.shoveRetries < 0) tmp.shoveRetries = 0;
+        if (tmp.shoveRetries > 10) tmp.shoveRetries = 10;
+
+        // Publish
+        g_cfg = std::move(tmp);
+
+        // Watcher state: you should watch BOTH files (see next note)
+        g_lastPath.clear(); // optional: stop using single-path watcher
+        logger::info("Config loaded. Legacy={} MCM={} WeaponMults(parsed={}, resolvedKeywords={}, unarmed={})",
+            haveLegacy ? legacyPath : "(none)",
+            haveMcm ? mcmPath : "(none)",
             parsed, resolved, g_cfg.unarmedMultiplier);
+    }
+
+    void MaybeReloadConfig()
+    {
+        using namespace std::chrono;
+
+        // Throttle: check at most once per second
+        const auto now = steady_clock::now();
+        if (now - g_lastCheck < 1s) {
+            return;
+        }
+        g_lastCheck = now;
+
+        const auto pluginName = SKSE::PluginDeclaration::GetSingleton()->GetName();
+
+        const auto legacyPath = GetLegacyPath(pluginName);
+        const auto mcmPath = GetMcmSettingsPath();
+
+        auto getState = [](const std::string& path, fs::file_time_type& outWt, std::error_code& outEc) -> bool {
+            outEc.clear();
+            if (!fs::exists(path, outEc) || outEc) {
+                outWt = fs::file_time_type{};
+                return false;
+            }
+            outWt = fs::last_write_time(path, outEc);
+            if (outEc) {
+                outWt = fs::file_time_type{};
+                return false;
+            }
+            return true;
+            };
+
+        fs::file_time_type legacyWt{};
+        fs::file_time_type mcmWt{};
+        std::error_code ecLegacy{};
+        std::error_code ecMcm{};
+
+        const bool legacyExists = getState(legacyPath, legacyWt, ecLegacy);
+        const bool mcmExists = getState(mcmPath, mcmWt, ecMcm);
+
+        // If the filesystem is erroring, fail silent; don't spam logs.
+        // (But still allow reload if the other file is OK.)
+        if (ecLegacy && ecMcm) {
+            return;
+        }
+
+        // First run initialization: capture current state, don’t reload.
+        // (Assumes LoadConfig() already ran during startup.)
+        static bool initialized = false;
+        if (!initialized) {
+            g_lastLegacyExists = legacyExists;
+            g_lastMcmExists = mcmExists;
+            g_lastLegacyWriteTime = legacyWt;
+            g_lastMcmWriteTime = mcmWt;
+            initialized = true;
+            return;
+        }
+
+        // Detect appearance/disappearance or timestamp changes.
+        const bool legacyChanged =
+            (legacyExists != g_lastLegacyExists) ||
+            (legacyExists && legacyWt != g_lastLegacyWriteTime);
+
+        const bool mcmChanged =
+            (mcmExists != g_lastMcmExists) ||
+            (mcmExists && mcmWt != g_lastMcmWriteTime);
+
+        if (!legacyChanged && !mcmChanged) {
+            return;
+        }
+
+        // Update stored state before reload to avoid loops if LoadConfig touches files.
+        g_lastLegacyExists = legacyExists;
+        g_lastMcmExists = mcmExists;
+        g_lastLegacyWriteTime = legacyWt;
+        g_lastMcmWriteTime = mcmWt;
+
+        LoadConfig();
+
+        if (legacyChanged && mcmChanged) {
+            logger::info("Config reloaded (legacy + MCM changed)");
+        }
+        else if (legacyChanged) {
+            logger::info("Config reloaded (legacy changed): {}", legacyPath);
+        }
+        else {
+            logger::info("Config reloaded (MCM changed): {}", mcmPath);
+        }
     }
 }

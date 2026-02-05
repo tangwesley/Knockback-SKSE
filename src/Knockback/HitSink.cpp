@@ -7,6 +7,10 @@
 #include <RE/S/ScriptEventSourceHolder.h>
 #include <RE/T/TESHitEvent.h>
 
+#include <filesystem>
+#include <chrono>
+#include <mutex>
+
 namespace logger = SKSE::log;
 
 namespace Knockback
@@ -26,6 +30,8 @@ namespace Knockback
             if (!a_event) {
                 return RE::BSEventNotifyControl::kContinue;
             }
+
+            Knockback::MaybeReloadConfig();
 
             RE::Actor* target = a_event->target ? a_event->target->As<RE::Actor>() : nullptr;
             RE::Actor* aggressor = a_event->cause ? a_event->cause->As<RE::Actor>() : nullptr;

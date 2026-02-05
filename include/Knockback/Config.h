@@ -53,4 +53,5 @@ namespace Knockback
     // Accessors
     const Config& GetConfig();
     void LoadConfig();
+    void MaybeReloadConfig();
 }
