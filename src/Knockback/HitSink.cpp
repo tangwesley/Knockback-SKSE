@@ -62,6 +62,14 @@ namespace Knockback
 
             const auto* weap = ResolveWeaponFromEventOrEquipped(*a_event, aggressor);
 
+            // If source is set but didn't resolve to a weapon (e.g. dragon breath
+            // explosion, ability effect), it isn't a melee hit — don't fall back
+            // to the unarmed multiplier.
+            if (a_event->source != 0 && !weap) {
+                logger::trace("Shove: skipped (non-weapon source) source={:08X}", a_event->source);
+                return RE::BSEventNotifyControl::kContinue;
+            }
+
             const float weaponMult = GetWeaponMultiplier(weap);
             if (weaponMult <= 0.0f) {
                 logger::trace("Shove: weapon is not configured");
