@@ -29,6 +29,9 @@ namespace Knockback
         // POV option: suppress when player aggressor in first-person
         bool disableInFirstPerson{ true };
 
+        // Suppress per-hit trace logging (info and above still logged)
+        bool disableVerboseLogs{ true };
+
         // Race allow/deny lists
         std::unordered_set<RE::FormID> allowRaces;
         std::unordered_set<RE::FormID> denyRaces;

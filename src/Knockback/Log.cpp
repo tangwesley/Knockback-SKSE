@@ -22,7 +22,15 @@ namespace Knockback
         auto loggerPtr = std::make_shared<spdlog::logger>("log", std::move(fileLoggerPtr));
 
         spdlog::set_default_logger(std::move(loggerPtr));
-        spdlog::set_level(spdlog::level::trace);
-        spdlog::flush_on(spdlog::level::trace);
+
+        // Start quiet; LoadConfig() re-applies this once the config is known.
+        SetVerboseLogging(false);
+    }
+
+    void SetVerboseLogging(bool a_enabled)
+    {
+        const auto level = a_enabled ? spdlog::level::trace : spdlog::level::info;
+        spdlog::set_level(level);
+        spdlog::flush_on(level);
     }
 }

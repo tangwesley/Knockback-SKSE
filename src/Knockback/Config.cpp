@@ -1,5 +1,7 @@
 #include <Knockback/Config.h>
 
+#include <Knockback/Log.h>
+
 #include "SKSE/SKSE.h"
 #include "SimpleIni.h"
 
@@ -104,14 +106,17 @@ namespace Knockback
         return std::format("Data\\MCM\\Settings\\{}.ini", kMcmModName);
     }
 
+    // MCM only when installed. Otherwise ini is authoratative. 
+    static bool IsMcmHelperInstalled()
+    {
+        std::error_code ec{};
+        return fs::exists("Data\\SKSE\\Plugins\\MCMHelper.dll", ec) && !ec;
+    }
+
     static std::string GetLegacyPath(std::string_view pluginName)
     {
-        // Your “always load” file name:
-        // If you want it hard-coded to KnockbackPlugin.ini, do this:
         return "Data\\SKSE\\Plugins\\KnockbackPlugin.ini";
 
-        // Or if you want “same name as dll” legacy behavior:
-        // return std::format("Data\\SKSE\\Plugins\\{}.ini", pluginName);
     }
 
 
@@ -196,6 +201,7 @@ namespace Knockback
         // Bools
         const bool disableInFirstPerson = legacy.GetBoolValue("General", "DisableInFirstPerson", true);
         const bool enforceMinSeparation = legacy.GetBoolValue("General", "EnforceMinSeparation", true);
+        const bool disableVerboseLogs = legacy.GetBoolValue("General", "DisableVerboseLogs", true);
 
         // Write keys that your MCM JSON / your MCM override loader expects (prefixed)
         mcm.SetDoubleValue("General", "fShoveMagnitude", shoveMagnitude);
@@ -209,6 +215,7 @@ namespace Knockback
         mcm.SetLongValue("General", "iShoveInitialDelayFrames", shoveInitialDelayFrames);
 
         mcm.SetBoolValue("General", "bDisableInFirstPerson", disableInFirstPerson);
+        mcm.SetBoolValue("General", "bDisableVerboseLogs", disableVerboseLogs);
 
         mcm.SetBoolValue("General", "bEnforceMinSeparation", enforceMinSeparation);
         mcm.SetDoubleValue("General", "fMinSeparationDistance", minSeparationDistance);
@@ -243,7 +250,8 @@ namespace Knockback
         CSimpleIniA mcmIni;
 
         const bool haveLegacy = fs::exists(legacyPath) && LoadIniFile(legacyIni, legacyPath);
-        bool haveMcm = fs::exists(mcmPath) && LoadIniFile(mcmIni, mcmPath);
+        const bool haveMcmHelper = IsMcmHelperInstalled();
+        bool haveMcm = haveMcmHelper && fs::exists(mcmPath) && LoadIniFile(mcmIni, mcmPath);
 
         if (!haveLegacy) {
             logger::warn("Legacy config not found or failed to load: {}", legacyPath);
@@ -255,6 +263,15 @@ namespace Knockback
 
         if (haveMcm) {
             logger::info("Loaded MCM settings: {}", mcmPath);
+        }
+        else if (!haveMcmHelper) {
+            if (fs::exists(mcmPath)) {
+                logger::info("MCM Helper not installed; ignoring MCM settings and using {} instead: {}",
+                    legacyPath, mcmPath);
+            }
+            else {
+                logger::info("MCM Helper not installed; using {} only", legacyPath);
+            }
         }
         else {
             logger::info("MCM settings not present yet: {}", mcmPath);
@@ -277,6 +294,7 @@ namespace Knockback
             tmp.minShoveSeparationDelta = static_cast<float>(legacyIni.GetDoubleValue("General", "MinShoveSeparationDelta", tmp.minShoveSeparationDelta));
 
             tmp.disableInFirstPerson = legacyIni.GetBoolValue("General", "DisableInFirstPerson", tmp.disableInFirstPerson);
+            tmp.disableVerboseLogs = legacyIni.GetBoolValue("General", "DisableVerboseLogs", tmp.disableVerboseLogs);
             tmp.applyCurrentMinVelocity = static_cast<float>(legacyIni.GetDoubleValue("General", "ApplyCurrentMinVelocity", tmp.applyCurrentMinVelocity));
             tmp.minDurationScale = static_cast<float>(legacyIni.GetDoubleValue("General", "MinDurationScale", tmp.minDurationScale));
 
@@ -353,8 +371,10 @@ namespace Knockback
                 }
             }
         }
-        SeedMcmFromLegacyIfMissing(legacyPath, mcmPath);
-        haveMcm = fs::exists(mcmPath) && LoadIniFile(mcmIni, mcmPath);
+        if (haveMcmHelper) {
+            SeedMcmFromLegacyIfMissing(legacyPath, mcmPath);
+            haveMcm = fs::exists(mcmPath) && LoadIniFile(mcmIni, mcmPath);
+        }
 
         // -----------------------------
         // 2) Apply MCM overrides (General + Unarmed ONLY)
@@ -386,6 +406,7 @@ namespace Knockback
             tmp.minShoveSeparationDelta = getFloat("General", "fMinShoveSeparationDelta", "MinShoveSeparationDelta", tmp.minShoveSeparationDelta);
 
             tmp.disableInFirstPerson = getBool("General", "bDisableInFirstPerson", "DisableInFirstPerson", tmp.disableInFirstPerson);
+            tmp.disableVerboseLogs = getBool("General", "bDisableVerboseLogs", "DisableVerboseLogs", tmp.disableVerboseLogs);
             tmp.applyCurrentMinVelocity = getFloat("General", "fApplyCurrentMinVelocity", "ApplyCurrentMinVelocity", tmp.applyCurrentMinVelocity);
             tmp.minDurationScale = getFloat("General", "fMinDurationScale", "MinDurationScale", tmp.minDurationScale);
 
@@ -423,13 +444,16 @@ namespace Knockback
         // Publish
         g_cfg = std::move(tmp);
 
+        SetVerboseLogging(!g_cfg.disableVerboseLogs);
+
         MaybeReloadConfig();
 
         // Watcher state: you should watch BOTH files (see next note)
         g_lastPath.clear(); // optional: stop using single-path watcher
-        logger::info("Config loaded. Legacy={} MCM={} WeaponMults(parsed={}, resolvedKeywords={}, unarmed={}, powerAttack={})",
+        logger::info("Config loaded. Legacy={} MCM={} DisableVerboseLogs={} WeaponMults(parsed={}, resolvedKeywords={}, unarmed={}, powerAttack={})",
             haveLegacy ? legacyPath : "(none)",
             haveMcm ? mcmPath : "(none)",
+            g_cfg.disableVerboseLogs,
             parsed, resolved, g_cfg.unarmedMultiplier, g_cfg.powerAttackMultiplier);
     }
 
@@ -477,7 +501,7 @@ namespace Knockback
             return;
         }
 
-        // First run initialization: capture current state, don’t reload.
+        // First run initialization: capture current state, don't reload.
         // (Assumes LoadConfig() already ran during startup.)
         static bool initialized = false;
         if (!initialized) {
