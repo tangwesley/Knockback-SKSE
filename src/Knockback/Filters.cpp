@@ -1,6 +1,7 @@
 #include <Knockback/Filters.h>
 #include <Knockback/Config.h>
 
+#include <RE/A/ActorState.h>
 #include <RE/P/PlayerCharacter.h>
 #include <RE/T/TESRace.h>
 #include <Knockback/Log.h>
@@ -52,6 +53,16 @@ namespace Knockback
         }
 
         return false;
+    }
+
+    bool IsAlive(RE::Actor* a)
+    {
+        if (!a) {
+            return false;
+        }
+
+        auto* state = a->AsActorState();
+        return state && state->GetLifeState() == RE::ACTOR_LIFE_STATE::kAlive;
     }
 
     bool IsPlayer(RE::Actor* a)

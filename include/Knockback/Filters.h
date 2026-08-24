@@ -7,6 +7,10 @@ namespace Knockback
     void InitKeywords();
 
     bool IsPlayer(RE::Actor* a);
+
+    // Actor::IsDead() reports true for live actors on some runtimes; read the
+    // life state bitfield instead of dispatching through the vtable.
+    bool IsAlive(RE::Actor* a);
     bool ShouldDisableDueToFirstPerson(RE::Actor* aggressor);
 
     bool IsValidKnockbackTarget(const RE::Actor* target);
