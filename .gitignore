@@ -1,0 +1,30 @@
+# Build output
+build/
+out/
+install/
+
+# vcpkg manifest-mode installs
+vcpkg_installed/
+
+# Visual Studio / VS Code
+.vs/
+.vscode/
+*.user
+*.suo
+CMakeSettings.json
+CMakeUserPresets.json
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+
+# Build artifacts
+*.obj
+*.lib
+*.exp
+*.ilk
+*.pdb
+*.dll
+dist/

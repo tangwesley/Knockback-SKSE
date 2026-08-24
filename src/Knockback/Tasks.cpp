@@ -39,7 +39,7 @@ namespace Knockback
 
             if (!aggressor || !target) return;
             if (aggressor == target) return;
-            if (aggressor->IsDead() || target->IsDead()) return;
+            if (!IsAlive(aggressor) || !IsAlive(target)) return;
 
             if (ShouldDisableDueToFirstPerson(aggressor)) return;
             if (!IsValidKnockbackTarget(target)) return;
@@ -119,7 +119,7 @@ namespace Knockback
 
             if (!aggressor || !target) return;
             if (aggressor == target) return;
-            if (aggressor->IsDead() || target->IsDead()) return;
+            if (!IsAlive(aggressor) || !IsAlive(target)) return;
 
             // Separation is only for player aggressor
             if (!IsPlayer(aggressor)) {
@@ -206,7 +206,7 @@ namespace Knockback
 
             if (!aggressor || !target) return;
             if (aggressor == target) return;
-            if (aggressor->IsDead() || target->IsDead()) return;
+            if (!IsAlive(aggressor) || !IsAlive(target)) return;
 
             if (ShouldDisableDueToFirstPerson(aggressor)) {
                 logger::trace("Shove (queued): suppressed (player in first-person)");

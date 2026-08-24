@@ -1,5 +1,7 @@
 #include <Knockback/Config.h>
 
+#include <Knockback/Log.h>
+
 #include "SKSE/SKSE.h"
 #include "SimpleIni.h"
 
@@ -24,7 +26,7 @@ namespace Knockback
     static std::mutex g_cfgMutex{};
     static fs::file_time_type g_lastWriteTime{};
     static std::string g_lastPath{};
-    static std::chrono::steady_clock::time_point g_lastCheck{}; 
+    static std::chrono::steady_clock::time_point g_lastCheck{};
     static fs::file_time_type g_lastLegacyWriteTime{};
     static fs::file_time_type g_lastMcmWriteTime{};
     static bool g_lastLegacyExists{ false };
@@ -100,18 +102,21 @@ namespace Knockback
 
     static std::string GetMcmSettingsPath()
     {
-        constexpr std::string_view kMcmModName = "KnockbackMCM";
+        constexpr std::string_view kMcmModName = "knockbackMCM";
         return std::format("Data\\MCM\\Settings\\{}.ini", kMcmModName);
+    }
+
+    // MCM only when installed. Otherwise ini is authoratative. 
+    static bool IsMcmHelperInstalled()
+    {
+        std::error_code ec{};
+        return fs::exists("Data\\SKSE\\Plugins\\MCMHelper.dll", ec) && !ec;
     }
 
     static std::string GetLegacyPath(std::string_view pluginName)
     {
-        // Your “always load” file name:
-        // If you want it hard-coded to KnockbackPlugin.ini, do this:
         return "Data\\SKSE\\Plugins\\KnockbackPlugin.ini";
 
-        // Or if you want “same name as dll” legacy behavior:
-        // return std::format("Data\\SKSE\\Plugins\\{}.ini", pluginName);
     }
 
 
@@ -150,6 +155,89 @@ namespace Knockback
         return fullID;
     }
 
+    static void SeedMcmFromLegacyIfMissing(const std::string& legacyPath, const std::string& mcmPath)
+    {
+        namespace fs = std::filesystem;
+
+        // If the MCM settings file already exists, do not overwrite user choices.
+        if (fs::exists(mcmPath)) {
+            return;
+        }
+
+        CSimpleIniA legacy;
+        legacy.SetUnicode();
+        legacy.SetMultiKey();
+        if (legacy.LoadFile(legacyPath.c_str()) < 0) {
+            // No legacy file -> nothing to seed.
+            return;
+        }
+
+        CSimpleIniA mcm;
+        mcm.SetUnicode();
+        mcm.SetMultiKey();
+
+        // ---- General ----
+        // Use the same defaults as Config{} so the seed matches compiled defaults when legacy key is absent.
+        // Floats
+        const double shoveMagnitude = legacy.GetDoubleValue("General", "ShoveMagnitude", 2.5);
+        const double shoveDuration = legacy.GetDoubleValue("General", "ShoveDuration", 0.12);
+        const double minShoveSeparationDelta = legacy.GetDoubleValue("General", "MinShoveSeparationDelta", 8.0);
+        const double applyCurrentMinVelocity = legacy.GetDoubleValue("General", "ApplyCurrentMinVelocity", 4.0);
+        const double minDurationScale = legacy.GetDoubleValue("General", "MinDurationScale", 0.15);
+
+        const double minSeparationDistance = legacy.GetDoubleValue("General", "MinSeparationDistance", 110.0);
+        const double separationPushDuration = legacy.GetDoubleValue("General", "SeparationPushDuration", 0.10);
+        const double separationMaxVelocity = legacy.GetDoubleValue("General", "SeparationMaxVelocity", 10.0);
+
+        // Ints
+        const long shoveRetries = legacy.GetLongValue("General", "ShoveRetries", 3);
+        const long shoveRetryDelayFrames = legacy.GetLongValue("General", "ShoveRetryDelayFrames", 1);
+        const long shoveInitialDelayFrames = legacy.GetLongValue("General", "ShoveInitialDelayFrames", 1);
+
+        const long separationRetries = legacy.GetLongValue("General", "SeparationRetries", 6);
+        const long separationInitialDelay = legacy.GetLongValue("General", "SeparationInitialDelayFrames", 1);
+        const long separationRetryDelay = legacy.GetLongValue("General", "SeparationRetryDelayFrames", 1);
+
+        // Bools
+        const bool disableInFirstPerson = legacy.GetBoolValue("General", "DisableInFirstPerson", true);
+        const bool enforceMinSeparation = legacy.GetBoolValue("General", "EnforceMinSeparation", true);
+        const bool disableVerboseLogs = legacy.GetBoolValue("General", "DisableVerboseLogs", true);
+
+        // Write keys that your MCM JSON / your MCM override loader expects (prefixed)
+        mcm.SetDoubleValue("General", "fShoveMagnitude", shoveMagnitude);
+        mcm.SetDoubleValue("General", "fShoveDuration", shoveDuration);
+        mcm.SetDoubleValue("General", "fMinShoveSeparationDelta", minShoveSeparationDelta);
+        mcm.SetDoubleValue("General", "fApplyCurrentMinVelocity", applyCurrentMinVelocity);
+        mcm.SetDoubleValue("General", "fMinDurationScale", minDurationScale);
+
+        mcm.SetLongValue("General", "iShoveRetries", shoveRetries);
+        mcm.SetLongValue("General", "iShoveRetryDelayFrames", shoveRetryDelayFrames);
+        mcm.SetLongValue("General", "iShoveInitialDelayFrames", shoveInitialDelayFrames);
+
+        mcm.SetBoolValue("General", "bDisableInFirstPerson", disableInFirstPerson);
+        mcm.SetBoolValue("General", "bDisableVerboseLogs", disableVerboseLogs);
+
+        mcm.SetBoolValue("General", "bEnforceMinSeparation", enforceMinSeparation);
+        mcm.SetDoubleValue("General", "fMinSeparationDistance", minSeparationDistance);
+        mcm.SetDoubleValue("General", "fSeparationPushDuration", separationPushDuration);
+        mcm.SetDoubleValue("General", "fSeparationMaxVelocity", separationMaxVelocity);
+        mcm.SetLongValue("General", "iSeparationRetries", separationRetries);
+        mcm.SetLongValue("General", "iSeparationInitialDelayFrames", separationInitialDelay);
+        mcm.SetLongValue("General", "iSeparationRetryDelayFrames", separationRetryDelay);
+
+        // ---- WeaponMultipliers (only the ones you expose/read from MCM) ----
+        const double unarmed = legacy.GetDoubleValue("WeaponMultipliers", "Unarmed", 0.85);
+        const double powerAttack = legacy.GetDoubleValue("WeaponMultipliers", "PowerAttack", 1.2);
+
+        mcm.SetDoubleValue("WeaponMultipliers", "fUnarmed", unarmed);
+        mcm.SetDoubleValue("WeaponMultipliers", "fPowerAttack", powerAttack);
+
+        // Ensure directory exists and write the file
+        fs::create_directories(fs::path(mcmPath).parent_path());
+        mcm.SaveFile(mcmPath.c_str());
+    }
+
+
     void LoadConfig()
     {
         Config tmp{};
@@ -162,7 +250,8 @@ namespace Knockback
         CSimpleIniA mcmIni;
 
         const bool haveLegacy = fs::exists(legacyPath) && LoadIniFile(legacyIni, legacyPath);
-        const bool haveMcm = fs::exists(mcmPath) && LoadIniFile(mcmIni, mcmPath);
+        const bool haveMcmHelper = IsMcmHelperInstalled();
+        bool haveMcm = haveMcmHelper && fs::exists(mcmPath) && LoadIniFile(mcmIni, mcmPath);
 
         if (!haveLegacy) {
             logger::warn("Legacy config not found or failed to load: {}", legacyPath);
@@ -174,6 +263,15 @@ namespace Knockback
 
         if (haveMcm) {
             logger::info("Loaded MCM settings: {}", mcmPath);
+        }
+        else if (!haveMcmHelper) {
+            if (fs::exists(mcmPath)) {
+                logger::info("MCM Helper not installed; ignoring MCM settings and using {} instead: {}",
+                    legacyPath, mcmPath);
+            }
+            else {
+                logger::info("MCM Helper not installed; using {} only", legacyPath);
+            }
         }
         else {
             logger::info("MCM settings not present yet: {}", mcmPath);
@@ -196,6 +294,7 @@ namespace Knockback
             tmp.minShoveSeparationDelta = static_cast<float>(legacyIni.GetDoubleValue("General", "MinShoveSeparationDelta", tmp.minShoveSeparationDelta));
 
             tmp.disableInFirstPerson = legacyIni.GetBoolValue("General", "DisableInFirstPerson", tmp.disableInFirstPerson);
+            tmp.disableVerboseLogs = legacyIni.GetBoolValue("General", "DisableVerboseLogs", tmp.disableVerboseLogs);
             tmp.applyCurrentMinVelocity = static_cast<float>(legacyIni.GetDoubleValue("General", "ApplyCurrentMinVelocity", tmp.applyCurrentMinVelocity));
             tmp.minDurationScale = static_cast<float>(legacyIni.GetDoubleValue("General", "MinDurationScale", tmp.minDurationScale));
 
@@ -272,6 +371,10 @@ namespace Knockback
                 }
             }
         }
+        if (haveMcmHelper) {
+            SeedMcmFromLegacyIfMissing(legacyPath, mcmPath);
+            haveMcm = fs::exists(mcmPath) && LoadIniFile(mcmIni, mcmPath);
+        }
 
         // -----------------------------
         // 2) Apply MCM overrides (General + Unarmed ONLY)
@@ -303,6 +406,7 @@ namespace Knockback
             tmp.minShoveSeparationDelta = getFloat("General", "fMinShoveSeparationDelta", "MinShoveSeparationDelta", tmp.minShoveSeparationDelta);
 
             tmp.disableInFirstPerson = getBool("General", "bDisableInFirstPerson", "DisableInFirstPerson", tmp.disableInFirstPerson);
+            tmp.disableVerboseLogs = getBool("General", "bDisableVerboseLogs", "DisableVerboseLogs", tmp.disableVerboseLogs);
             tmp.applyCurrentMinVelocity = getFloat("General", "fApplyCurrentMinVelocity", "ApplyCurrentMinVelocity", tmp.applyCurrentMinVelocity);
             tmp.minDurationScale = getFloat("General", "fMinDurationScale", "MinDurationScale", tmp.minDurationScale);
 
@@ -325,26 +429,31 @@ namespace Knockback
             }
             if (mcmIni.KeyExists("WeaponMultipliers", "fPowerAttack")) {
                 tmp.powerAttackMultiplier = static_cast<float>(
-                    mcmIni.GetDoubleValue("WeaponMultipliers", "fPowerAttack", tmp.unarmedMultiplier));
+                    mcmIni.GetDoubleValue("WeaponMultipliers", "fPowerAttack", tmp.powerAttackMultiplier));
             }
             else if (mcmIni.KeyExists("WeaponMultipliers", "PowerAttack")) {
                 tmp.powerAttackMultiplier = static_cast<float>(
-                    mcmIni.GetDoubleValue("WeaponMultipliers", "PowerAttack", tmp.unarmedMultiplier));
+                    mcmIni.GetDoubleValue("WeaponMultipliers", "PowerAttack", tmp.powerAttackMultiplier));
             }
         }
 
-        // clamps (keep yours)
+        // clamps
         if (tmp.shoveRetries < 0) tmp.shoveRetries = 0;
         if (tmp.shoveRetries > 10) tmp.shoveRetries = 10;
 
         // Publish
         g_cfg = std::move(tmp);
 
+        SetVerboseLogging(!g_cfg.disableVerboseLogs);
+
+        MaybeReloadConfig();
+
         // Watcher state: you should watch BOTH files (see next note)
         g_lastPath.clear(); // optional: stop using single-path watcher
-        logger::info("Config loaded. Legacy={} MCM={} WeaponMults(parsed={}, resolvedKeywords={}, unarmed={}, powerAttack={})",
+        logger::info("Config loaded. Legacy={} MCM={} DisableVerboseLogs={} WeaponMults(parsed={}, resolvedKeywords={}, unarmed={}, powerAttack={})",
             haveLegacy ? legacyPath : "(none)",
             haveMcm ? mcmPath : "(none)",
+            g_cfg.disableVerboseLogs,
             parsed, resolved, g_cfg.unarmedMultiplier, g_cfg.powerAttackMultiplier);
     }
 
@@ -392,7 +501,7 @@ namespace Knockback
             return;
         }
 
-        // First run initialization: capture current state, don’t reload.
+        // First run initialization: capture current state, don't reload.
         // (Assumes LoadConfig() already ran during startup.)
         static bool initialized = false;
         if (!initialized) {

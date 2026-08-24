@@ -1,7 +1,9 @@
 #include <Knockback/Physics.h>
 #include <Knockback/Config.h>
+#include <Knockback/Filters.h>
 
 #include "SKSE/SKSE.h"
+#include <atomic>
 #include <xmmintrin.h>
 #include <cmath>
 #include <algorithm>
@@ -10,6 +12,41 @@ namespace logger = SKSE::log;
 
 namespace Knockback
 {
+    namespace
+    {
+        // CommonLibSSE NG's TESObjectREFR declaration order disagrees with the vtable
+        // the game actually uses: on SE 1.5.97 and AE 1.6.1170 a plain virtual call
+        // lands one slot late, so Actor::IsDead() reports true for live actors and
+        // Actor::ApplyCurrent() silently does nothing. The header's documented slots
+        // (0x99 / 0x9D) are correct on both, but hardcoding them unconditionally would
+        // break on any runtime where the declarations do line up.
+        //
+        // So decide at runtime: dispatch IsDead() both ways against an actor already
+        // known to be alive. Disagreement means the compiler-assigned index is wrong.
+        // Only then fall back to the documented slot numbers.
+        bool UseDocumentedVtableSlots(RE::Actor* a_liveActor)
+        {
+            enum : int { kUnknown = -1, kCompilerIndices = 0, kDocumentedSlots = 1 };
+            static std::atomic<int> cached{ kUnknown };
+
+            int mode = cached.load(std::memory_order_relaxed);
+            if (mode == kUnknown) {
+                const bool deadViaCompiler = a_liveActor->IsDead();
+                const bool deadViaSlot =
+                    REL::RelocateVirtual<decltype(&RE::Actor::IsDead)>(0x99, 0x9A, a_liveActor, true);
+
+                mode = (deadViaCompiler && !deadViaSlot) ? kDocumentedSlots : kCompilerIndices;
+                cached.store(mode, std::memory_order_relaxed);
+
+                logger::info("Vtable dispatch: {} (live actor IsDead: compiler={}, slot 0x99={})",
+                    mode == kDocumentedSlots ? "documented slots" : "compiler indices",
+                    deadViaCompiler, deadViaSlot);
+            }
+
+            return mode == kDocumentedSlots;
+        }
+    }
+
     float HorizontalDistance(RE::Actor* a, RE::Actor* b)
     {
         if (!a || !b) return 0.0f;
@@ -45,7 +82,7 @@ namespace Knockback
         }
 
         // Basic lifecycle sanity (cheap + prevents weird edge cases)
-        if (target->IsDead() || aggressor->IsDead()) {
+        if (!IsAlive(target) || !IsAlive(aggressor)) {
             return false;
         }
 
@@ -97,7 +134,13 @@ namespace Knockback
             magnitude,
             duration,
 			target->GetFormID());
-        return target->ApplyCurrent(duration, vel);
+        // target is known alive here, so the dispatch probe is meaningful.
+        const bool ok = UseDocumentedVtableSlots(target)
+            ? REL::RelocateVirtual<decltype(&RE::Actor::ApplyCurrent)>(0x9D, 0x9E, target, duration, vel)
+            : target->ApplyCurrent(duration, vel);
+
+        logger::trace("ApplyPhysicsShove: ApplyCurrent -> {}", ok);
+        return ok;
     }
 
 

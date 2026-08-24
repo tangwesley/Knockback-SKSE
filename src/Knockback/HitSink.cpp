@@ -33,17 +33,33 @@ namespace Knockback
 
             Knockback::MaybeReloadConfig();
 
+            logger::trace("Hit: target={:08X} cause={:08X} source={:08X} projectile={:08X} flags={:02X}",
+                a_event->target ? a_event->target->GetFormID() : 0,
+                a_event->cause ? a_event->cause->GetFormID() : 0,
+                a_event->source,
+                a_event->projectile,
+                a_event->flags.underlying());
+
             RE::Actor* target = a_event->target ? a_event->target->As<RE::Actor>() : nullptr;
             RE::Actor* aggressor = a_event->cause ? a_event->cause->As<RE::Actor>() : nullptr;
 
-            if (!target || !aggressor) return RE::BSEventNotifyControl::kContinue;
+            if (!target || !aggressor) {
+                logger::trace("Shove: skipped (target or cause is not an actor)");
+                return RE::BSEventNotifyControl::kContinue;
+            }
             if (target == aggressor) {
                 logger::trace("Shove: target == aggressor");
                 return RE::BSEventNotifyControl::kContinue;
             }
-            if (target->IsDead() || aggressor->IsDead()) return RE::BSEventNotifyControl::kContinue;
+            if (!IsAlive(target) || !IsAlive(aggressor)) {
+                logger::trace("Shove: skipped (target or aggressor is not alive)");
+                return RE::BSEventNotifyControl::kContinue;
+            }
 
-            if (ShouldDisableDueToFirstPerson(aggressor)) return RE::BSEventNotifyControl::kContinue;
+            if (ShouldDisableDueToFirstPerson(aggressor)) {
+                logger::trace("Shove: skipped (player aggressor in first person)");
+                return RE::BSEventNotifyControl::kContinue;
+            }
 
             if (!IsValidKnockbackTarget(target)) {
                 logger::trace("Shove: target not allowed (humanoid filter)");
@@ -61,6 +77,14 @@ namespace Knockback
             }
 
             const auto* weap = ResolveWeaponFromEventOrEquipped(*a_event, aggressor);
+
+            // If source is set but didn't resolve to a weapon (e.g. dragon breath
+            // explosion, ability effect), it isn't a melee hit — don't fall back
+            // to the unarmed multiplier.
+            if (a_event->source != 0 && !weap) {
+                logger::trace("Shove: skipped (non-weapon source) source={:08X}", a_event->source);
+                return RE::BSEventNotifyControl::kContinue;
+            }
 
             const float weaponMult = GetWeaponMultiplier(weap);
             if (weaponMult <= 0.0f) {

@@ -1,6 +1,34 @@
 This SKSE plugin allows actors to apply a knockback force on melee hits.
 Configurable force, duration, latency, and exceptions for certain races.
 
+## Compatibility
+
+Built against CommonLibSSE-NG, so a single `KnockbackPlugin.dll` runs on every
+supported runtime:
+
+| Runtime | Version |
+| --- | --- |
+| Skyrim SE | 1.5.97 |
+| Skyrim AE | 1.6.317 - 1.6.1170, 1.7.99 |
+| Skyrim VR | 1.4.15 |
+
+Requirements: SKSE (or SKSEVR) for your runtime, plus the matching address library —
+[Address Library for SKSE Plugins](https://www.nexusmods.com/skyrimspecialedition/mods/32444)
+for SE/AE, or [VR Address Library](https://www.nexusmods.com/skyrimspecialedition/mods/58101) for VR.
+
+## Building
+
+```
+cmake --preset release
+cmake --build build/release
+```
+
+Requires `VCPKG_ROOT` set, MSVC in the environment, and the submodules checked
+out (`git submodule update --init --recursive`) - CommonLibSSE NG is vendored in
+`external/CommonLibSSE-NG` rather than pulled from vcpkg. The runtime is detected at
+load time, so there is nothing to switch per game version — one build covers SE,
+AE, and VR.
+
 Example `KnockbackPlugin.ini`:
 
 ```ini
@@ -22,6 +50,10 @@ ShoveRetries=5
 ShoveRetryDelayFrames=1
 ;   No knockback to enemies in first person. Player should still get knocked back.
 DisableInFirstPerson=true
+;   Suppresses the per-hit trace spam in the log file. Set to false when troubleshooting.
+;   Startup/config messages are always logged.
+;   With MCM Helper installed, the MCM toggle overrides this line.
+DisableVerboseLogs=true
 ; Set for scaling when ShoveMagnitude is too low. Here's the formula.
 ; peakV = max(ShoveMagnitude, ApplyCurrentMinVelocity)
 ; scaledDuration = ShoveDuration * (ShoveMagnitude / peakV)
@@ -279,19 +311,43 @@ Deny=Dragonborn.esm|001052A3 ; Dragon Race
 Deny=Dragonborn.esm|000E7713 ; Dragon Race
 Deny=Dragonborn.esm|00012E82 ; Dragon Race
 Deny=Dragonborn.esm|00014495 ; Giant
-
-
 ```
 
 ========================================================================================================
 
-## License and Commercial Use
 
-This repository is provided for **non-commercial use only**.
+## Runtime note: vtable dispatch workaround
 
-Commercial use is **explicitly prohibited**, including but not limited to:
-- Selling the software or source code
-- Offering it as part of a paid product, service, or subscription
-- Hosting it as a paid SaaS or API
-- Charging fees for access, support, or distribution
+CommonLibSSE NG's `TESObjectREFR` virtual declarations do not line up with the
+vtable the game actually uses. On SE 1.5.97 and AE 1.6.1170 a plain virtual call
+lands one slot late, which makes `Actor::IsDead()` return true for living actors
+and `Actor::ApplyCurrent()` do nothing at all - the plugin loads, registers its
+hit sink, and silently applies no knockback.
 
+Two things work around it:
+
+- `Knockback::IsAlive()` (Filters) reads `ActorState::GetLifeState()` instead of
+  calling `Actor::IsDead()`.
+- `Physics.cpp` probes dispatch once per session by calling `IsDead()` both ways
+  on an actor already known to be alive. If they disagree, the shove is applied
+  through the header's documented slot (`0x9D`) via `REL::RelocateVirtual`;
+  otherwise the plain virtual call is used. The startup log records which path
+  was chosen (`Vtable dispatch: ...`).
+
+The probe is deliberately adaptive rather than hardcoded, so a runtime whose
+declarations do line up keeps using the normal virtual call. Verified working on
+SE 1.5.97 and AE 1.6.1170. If upstream corrects the declaration order, the probe
+will simply stop engaging and this code can be removed.
+## License
+
+Copyright (C) 2026 Wesley Tang
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. See [LICENSE](LICENSE).
+
+The plugin statically links [CommonLibSSE NG](https://github.com/alandtse/CommonLibSSE-NG),
+which is GPL-3.0-or-later with a modding exception that covers Skyrim and SKSE but
+not plugin code. The combined work is therefore GPL-3.0-or-later, which permits
+commercial use.
