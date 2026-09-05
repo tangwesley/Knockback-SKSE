@@ -24,6 +24,7 @@ add_commonlibsse_plugin(${PROJECT_NAME}
         src/Knockback/Filters.cpp
         src/Knockback/Physics.cpp
         src/Knockback/Tasks.cpp
+        src/Knockback/FrameTick.cpp
         src/Knockback/HitSink.cpp
 )
 

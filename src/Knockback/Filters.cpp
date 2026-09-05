@@ -62,7 +62,21 @@ namespace Knockback
         }
 
         auto* state = a->AsActorState();
-        return state && state->GetLifeState() == RE::ACTOR_LIFE_STATE::kAlive;
+        if (!state) {
+            return false;
+        }
+
+        // Bleedout (and the essential-down variant) still has a working character
+        // controller and should still take a shove; only the dead/dying/unconscious
+        // states are excluded.
+        switch (state->GetLifeState()) {
+        case RE::ACTOR_LIFE_STATE::kAlive:
+        case RE::ACTOR_LIFE_STATE::kBleedout:
+        case RE::ACTOR_LIFE_STATE::kEssentialDown:
+            return true;
+        default:
+            return false;
+        }
     }
 
     bool IsPlayer(RE::Actor* a)
@@ -218,12 +232,14 @@ namespace Knockback
 
     bool GetIsAttacking(RE::Actor* a)
     {
-        bool v = false;
+        return a && a->IsAttacking();
+    }
+
+    bool IsAnimDrivenOrAttacking(RE::Actor* a)
+    {
         if (!a) return false;
-
-        // Try a couple common names; keep whichever works in your environment
         if (a->IsAttacking()) return true;
-
-        return false;
+        // Engine's own check (non-virtual), the same one movement code consults.
+        return a->IsMovementAnimationDriven();
     }
 }

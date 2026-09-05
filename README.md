@@ -44,10 +44,6 @@ Example `KnockbackPlugin.ini`:
 ;   4.0+ = strong shove / noticeable stagger
 ShoveMagnitude = 3.5
 ShoveDuration = 0.12
-;   Retries for number of frames to try after a failed frame.
-;   If it feels sluggish or laggy, reduce these or set to 0
-ShoveRetries=5
-ShoveRetryDelayFrames=1
 ;   No knockback to enemies in first person. Player should still get knocked back.
 DisableInFirstPerson=true
 ;   Suppresses the per-hit trace spam in the log file. Set to false when troubleshooting.
@@ -60,7 +56,11 @@ DisableVerboseLogs=true
 ; scaledDuration = max(scaledDuration, configDuration * minDurationScale)
 ApplyCurrentMinVelocity=4.0
 MinDurationScale=0.15
-; Minimum separation enforcement (push aggressor back if too close after shove, useful if enemy is against a wall)
+; Minimum separation enforcement (push aggressor back if too close after shove, useful if enemy is against a wall).
+; Player aggressor only. Runs on the per-frame hook: after SeparationInitialDelayFrames the distance
+; is measured each attempt; if under MinSeparationDistance the player is pushed away at
+; deficit / SeparationPushDuration (capped at SeparationMaxVelocity) for that duration, then it waits
+; SeparationRetryDelayFrames and re-measures, up to SeparationRetries times.
 EnforceMinSeparation=true
 MinSeparationDistance=80.0
 SeparationPushDuration=0.08
@@ -68,9 +68,17 @@ SeparationMaxVelocity=12.0
 SeparationRetries=6
 SeparationInitialDelayFrames=2
 SeparationRetryDelayFrames=1
-; You don't need to touch these if you don't know what they do. They are for physics consistency checks.
-ShoveInitialDelayFrames=1
-MinShoveSeparationDelta=8.0
+; While the target is mid-attack its movement is animation-driven and the normal shove
+; gets overwritten every frame. For this many frames after a hit the shove velocity is
+; re-applied directly, right after the target's own movement update each frame, while
+; the target is still attacking. 0 disables.
+AnimDrivenRefreshFrames=8
+; Player as target. The player's controller rewrites its velocity every physics step, so
+; the player is pushed by substituting the shove into that write for this many frames,
+; ramping linearly to zero. Distance is about ShoveMagnitude * PlayerShoveMultiplier *
+; PlayerShoveFrames / (2 * fps). Raise either value for a stronger hit. 0 frames disables.
+PlayerShoveMultiplier=1.0
+PlayerShoveFrames=24
 
 [WeaponMultipliers]
 ; Keyword FormID = multiplier
@@ -333,6 +341,16 @@ Two things work around it:
   through the header's documented slot (`0x9D`) via `REL::RelocateVirtual`;
   otherwise the plain virtual call is used. The startup log records which path
   was chosen (`Vtable dispatch: ...`).
+- `FrameTick.cpp` hooks `Character::Update` and `PlayerCharacter::Update` at the
+  documented slot (`0xAD`) to get a real per-frame tick for the animation-driven
+  velocity refresh. SKSE's task queue drains re-queued tasks within the same frame,
+  so it cannot serve as one. It also hooks `SetLinearVelocityImpl` (slot `07`) on
+  both character controller types and substitutes the shove into the engine's own
+  per-step velocity write while a refresh is active; the player's rigid-body
+  controller rewrites its velocity every step, so this is the only write that moves
+  the player. The hooks are installed lazily on the first shove and only when the
+  probe above reports documented slots; otherwise the refresh degrades to a single
+  direct velocity write and the log says so.
 
 The probe is deliberately adaptive rather than hardcoded, so a runtime whose
 declarations do line up keeps using the normal virtual call. Verified working on

@@ -1,36 +1,13 @@
 #pragma once
 
 #include <RE/Skyrim.h>
-#include <cstdint>
 
 namespace Knockback
 {
+    // Applies the ApplyCurrent shove at the next SKSE task drain and hands any
+    // multi-frame follow-up (refresh, player push, separation) to the frame hooks.
     void QueuePhysicsShove(
         RE::ActorHandle aggressorH,
         RE::ActorHandle targetH,
-        std::int32_t remainingTries,
-        std::int32_t delayFrames,
         float weaponMult);
-
-    static void QueueShoveEffectivenessCheck(
-        RE::ActorHandle aggressorH,
-        RE::ActorHandle targetH,
-        std::int32_t remainingTries,
-        float distBefore,
-        std::int32_t delayFrames,
-        float weaponMult);
-    
-    void QueueEnforceMinSeparation(RE::ActorHandle aggressorH,
-        RE::ActorHandle targetH,
-        std::int32_t remainingTries,
-        std::int32_t delayFrames,
-        float lastDist = -1.0f,
-        std::int32_t noProgressCount = 0);
-
-    void QueuePhysicsShoveWithAttackDeferral(
-        RE::ActorHandle aggressorH,
-        RE::ActorHandle targetH,
-        std::int32_t tries,
-        float weaponMult,
-        std::int32_t remainingWaitFrames);
 }

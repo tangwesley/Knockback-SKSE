@@ -12,8 +12,6 @@ namespace logger = SKSE::log;
 
 namespace Knockback
 {
-    namespace
-    {
         // CommonLibSSE NG's TESObjectREFR declaration order disagrees with the vtable
         // the game actually uses: on SE 1.5.97 and AE 1.6.1170 a plain virtual call
         // lands one slot late, so Actor::IsDead() reports true for live actors and
@@ -45,7 +43,6 @@ namespace Knockback
 
             return mode == kDocumentedSlots;
         }
-    }
 
     float HorizontalDistance(RE::Actor* a, RE::Actor* b)
     {
@@ -143,6 +140,54 @@ namespace Knockback
         return ok;
     }
 
+
+    bool ApplyControllerVelocity(RE::Actor* aggressor, RE::Actor* target, float magnitude)
+    {
+        if (!aggressor || !target || aggressor == target) {
+            return false;
+        }
+        if (!IsAlive(target) || !IsAlive(aggressor)) {
+            return false;
+        }
+        if (!target->Is3DLoaded() || !target->Get3D()) {
+            return false;
+        }
+
+        auto* cc = target->GetCharController();
+        if (!cc) {
+            logger::trace("ApplyControllerVelocity: no char controller {:08X}", target->GetFormID());
+            return false;
+        }
+
+        const auto aPos = aggressor->GetPosition();
+        const auto tPos = target->GetPosition();
+
+        float dx = tPos.x - aPos.x;
+        float dy = tPos.y - aPos.y;
+        const float lenSq = dx * dx + dy * dy;
+        if (lenSq < 1e-6f) {
+            return false;
+        }
+        const float invLen = 1.0f / std::sqrt(lenSq);
+        dx *= invLen;
+        dy *= invLen;
+
+        // Keep whatever vertical velocity the controller has (gravity, steps) and
+        // replace only the horizontal component with the shove.
+        RE::hkVector4 cur{};
+        cc->GetLinearVelocityImpl(cur);
+        const float vz = cur.quad.m128_f32[2];
+
+        RE::hkVector4 vel{};
+        vel.quad = _mm_setr_ps(dx * magnitude, dy * magnitude, vz, 0.0f);
+        cc->SetLinearVelocityImpl(vel);
+
+        // Read-back of the previous frame's velocity tells whether the last write survived.
+        logger::trace("ApplyControllerVelocity: was=({}, {}, {}) set=({}, {}, {}) mag={} on target {:08X}",
+            cur.quad.m128_f32[0], cur.quad.m128_f32[1], vz,
+            vel.quad.m128_f32[0], vel.quad.m128_f32[1], vz, magnitude, target->GetFormID());
+        return true;
+    }
 
     bool ApplyVelocityAwayFrom(RE::Actor* from, RE::Actor* who, float magnitude, float duration)
     {
