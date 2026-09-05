@@ -2,186 +2,21 @@
 
 #include <Knockback/Config.h>
 #include <Knockback/Filters.h>
+#include <Knockback/FrameTick.h>
 #include <Knockback/Physics.h>
 
 #include "SKSE/SKSE.h"
-#include <algorithm>
-#include <cmath>
 
 namespace logger = SKSE::log;
 
 namespace Knockback
 {
-    static void QueueShoveEffectivenessCheck(
-        RE::ActorHandle aggressorH,
-        RE::ActorHandle targetH,
-        std::int32_t remainingTries,
-        float distBefore,
-        std::int32_t delayFrames,
-        float weaponMult)
-    {
-        auto taskIf = SKSE::GetTaskInterface();
-        if (!taskIf) {
-            return;
-        }
-
-        taskIf->AddTask([=]() {
-            if (delayFrames > 0) {
-                QueueShoveEffectivenessCheck(
-                    aggressorH, targetH, remainingTries, distBefore, delayFrames - 1, weaponMult);
-                return;
-            }
-
-            auto aggressorPtr = aggressorH.get();
-            auto targetPtr = targetH.get();
-            RE::Actor* aggressor = aggressorPtr ? aggressorPtr.get() : nullptr;
-            RE::Actor* target = targetPtr ? targetPtr.get() : nullptr;
-
-            if (!aggressor || !target) return;
-            if (aggressor == target) return;
-            if (!IsAlive(aggressor) || !IsAlive(target)) return;
-
-            if (ShouldDisableDueToFirstPerson(aggressor)) return;
-            if (!IsValidKnockbackTarget(target)) return;
-
-            if (weaponMult <= 0.0f) {
-                return;
-            }
-
-            const auto& cfg = GetConfig();
-
-            const float distAfter = HorizontalDistance(aggressor, target);
-            const float gained = distAfter - distBefore;
-
-            if (gained >= cfg.minShoveSeparationDelta) {
-                logger::trace(
-                    "ShoveEffect: ok before={} after={} gained={}",
-                    distBefore, distAfter, gained);
-                return;
-            }
-
-            const auto nextTries = remainingTries - 1;
-            if (nextTries <= 0) {
-                return;
-            }
-
-            float mag = cfg.shoveMagnitude * weaponMult;
-            float dur = cfg.shoveDuration;
-            ShapeForApplyCurrent(mag, dur);
-
-            const bool ok = ApplyPhysicsShove(aggressor, target, mag, dur);
-            logger::trace(
-                "ShoveEffect: reapply ok={} mag={} dur={} mult={}",
-                ok, mag, dur, weaponMult);
-
-            QueueShoveEffectivenessCheck(
-                aggressorH,
-                targetH,
-                nextTries,
-                distAfter,
-                std::max(1, cfg.shoveRetryDelayFrames),
-                weaponMult);
-            });
-    }
-
-
-    void QueueEnforceMinSeparation(RE::ActorHandle aggressorH,
-        RE::ActorHandle targetH,
-        std::int32_t remainingTries,
-        std::int32_t delayFrames,
-        float lastDist,
-        std::int32_t noProgressCount)
-    {
-        const auto& cfg = GetConfig();
-
-        if (!cfg.enforceMinSeparation || cfg.minSeparationDistance <= 0.0f || remainingTries <= 0) {
-            return;
-        }
-
-        auto taskIf = SKSE::GetTaskInterface();
-        if (!taskIf) {
-            logger::trace("Separation: no TaskInterface");
-            return;
-        }
-
-        taskIf->AddTask([aggressorH, targetH, remainingTries, delayFrames, lastDist, noProgressCount]() mutable {
-            const auto& cfg = GetConfig();
-
-            if (delayFrames > 0) {
-                QueueEnforceMinSeparation(aggressorH, targetH, remainingTries, delayFrames - 1, lastDist, noProgressCount);
-                return;
-            }
-
-            auto aggressorPtr = aggressorH.get();
-            auto targetPtr = targetH.get();
-            RE::Actor* aggressor = aggressorPtr ? aggressorPtr.get() : nullptr;
-            RE::Actor* target = targetPtr ? targetPtr.get() : nullptr;
-
-            if (!aggressor || !target) return;
-            if (aggressor == target) return;
-            if (!IsAlive(aggressor) || !IsAlive(target)) return;
-
-            // Separation is only for player aggressor
-            if (!IsPlayer(aggressor)) {
-                return;
-            }
-
-            if (ShouldDisableDueToFirstPerson(aggressor)) return;
-            if (!IsValidKnockbackTarget(target)) return;
-
-            const float dist = HorizontalDistance(aggressor, target);
-            const float minDist = cfg.minSeparationDistance;
-
-            if (lastDist >= 0.0f) {
-                const float delta = std::fabs(dist - lastDist);
-
-                if (delta < 1.0f) {
-                    noProgressCount++;
-                }
-                else {
-                    noProgressCount = 0;
-                }
-
-                if (noProgressCount >= 2) {
-                    logger::trace("Separation: no progress (dist={} lastDist={} delta={}) -> stop",
-                        dist, lastDist, delta);
-                    return;
-                }
-            }
-
-            if (dist >= minDist) {
-                logger::trace("Separation: ok dist={} (min={})", dist, minDist);
-                return;
-            }
-
-            const float deficit = (minDist - dist);
-
-            float dur = cfg.separationPushDuration;
-            float mag = (dur > 1e-4f) ? (deficit / dur) : cfg.separationMaxVelocity;
-
-            if (cfg.separationMaxVelocity > 0.0f) {
-                mag = std::min(mag, cfg.separationMaxVelocity);
-            }
-
-            ShapeForApplyCurrent(mag, dur);
-
-            const bool ok = ApplyVelocityAwayFrom(/*from=*/target, /*who=*/aggressor, mag, dur);
-
-            logger::trace("Separation: dist={} deficit={} -> pushAggressor mag={} dur={} ok={} triesLeftAfter={}",
-                dist, deficit, mag, dur, ok, remainingTries - 1);
-
-            const auto nextTries = remainingTries - 1;
-            if (nextTries > 0) {
-                QueueEnforceMinSeparation(aggressorH, targetH, nextTries, cfg.separationRetryDelayFrames, dist, noProgressCount);
-            }
-            });
-    }
-
+    // Runs once, at the next SKSE task drain after the hit event. Anything that needs to
+    // span real frames (attacking-target refresh, player push, separation) is handed to
+    // the frame hooks from here; SKSE's task queue cannot delay across frames.
     void QueuePhysicsShove(
         RE::ActorHandle aggressorH,
         RE::ActorHandle targetH,
-        std::int32_t remainingTries,
-        std::int32_t delayFrames,
         float weaponMult)
     {
         auto taskIf = SKSE::GetTaskInterface();
@@ -192,11 +27,6 @@ namespace Knockback
 
         taskIf->AddTask([=]() {
             const auto& cfg = GetConfig();
-
-            if (delayFrames > 0) {
-                QueuePhysicsShove(aggressorH, targetH, remainingTries, delayFrames - 1, weaponMult);
-                return;
-            }
 
             auto aggressorPtr = aggressorH.get();
             auto targetPtr = targetH.get();
@@ -227,75 +57,47 @@ namespace Knockback
             float dur = cfg.shoveDuration;
             ShapeForApplyCurrent(mag, dur);
 
-            const float distBefore = HorizontalDistance(aggressor, target);
             const bool ok = ApplyPhysicsShove(aggressor, target, mag, dur);
-
-            if (ok) {
-                logger::trace(
-                    "Shove (queued): applied mag={} dur={} mult={} triesLeftAfter={}",
-                    mag, dur, weaponMult, remainingTries - 1);
-
-                if (cfg.minShoveSeparationDelta > 0.0f) {
-                    QueueShoveEffectivenessCheck(
-                        aggressorH,
-                        targetH,
-                        remainingTries,
-                        distBefore,
-                        /*delayFrames*/ 1,
-                        weaponMult);
-                }
-
-                if (cfg.enforceMinSeparation && cfg.separationRetries > 0 && IsPlayer(aggressor)) {
-                    QueueEnforceMinSeparation(
-                        aggressorH,
-                        targetH,
-                        cfg.separationRetries,
-                        cfg.separationInitialDelayFrames);
-                }
+            if (!ok) {
+                logger::trace("Shove (queued): failed mag={} dur={} mult={}", mag, dur, weaponMult);
                 return;
             }
 
-            logger::trace(
-                "Shove (queued): failed mag={} dur={} mult={} triesLeftAfter={}",
-                mag, dur, weaponMult, remainingTries - 1);
+            logger::trace("Shove (queued): applied mag={} dur={} mult={}", mag, dur, weaponMult);
 
-            const auto nextTries = remainingTries - 1;
-            if (nextTries > 0) {
-                QueuePhysicsShove(aggressorH, targetH, nextTries, cfg.shoveRetryDelayFrames, weaponMult);
+            if (IsPlayer(target)) {
+                // The player's rigid-body controller rewrites its velocity every physics
+                // step regardless of animation state, so ApplyCurrent barely registers.
+                // The per-step substitution is the whole push here.
+                if (cfg.playerShoveFrames > 0 && EnsureFrameHooks(target)) {
+                    const float playerMag = mag * cfg.playerShoveMultiplier;
+                    logger::trace("Shove (queued): player target, substituting velocity for {} frames (mag={}, ease-out)",
+                        cfg.playerShoveFrames, playerMag);
+                    RegisterVelocityOverride(aggressorH, targetH, playerMag, cfg.playerShoveFrames,
+                        /*easeOut*/ true, /*ignoreAnimState*/ true);
+                }
             }
-            });
-    }
-
-    void QueuePhysicsShoveWithAttackDeferral(
-        RE::ActorHandle aggressorH,
-        RE::ActorHandle targetH,
-        std::int32_t tries,
-        float weaponMult,
-        std::int32_t remainingWaitFrames)
-    {
-        auto taskIf = SKSE::GetTaskInterface();
-        if (!taskIf) return;
-
-        taskIf->AddTask([=]() {
-            auto aPtr = aggressorH.get();
-            auto tPtr = targetH.get();
-            auto* aggressor = aPtr ? aPtr.get() : nullptr;
-            auto* target = tPtr ? tPtr.get() : nullptr;
-            if (!aggressor || !target) return;
-
-            // If still attacking, keep deferring until we hit the cap
-            if (remainingWaitFrames > 0 && GetIsAttacking(target)) {
-                constexpr std::int32_t poll = 1;
-                QueuePhysicsShoveWithAttackDeferral(
-                    aggressorH, targetH, tries, weaponMult,
-                    remainingWaitFrames - poll);
-
-                logger::trace("Actor attacking. Deferring...");
-                return;
+            else if (cfg.animDrivenRefreshFrames > 0 && IsAnimDrivenOrAttacking(target)) {
+                if (EnsureFrameHooks(target)) {
+                    logger::trace("Shove (queued): target animation-driven, refreshing velocity post-Update for {} frames",
+                        cfg.animDrivenRefreshFrames);
+                    RegisterVelocityOverride(aggressorH, targetH, mag, cfg.animDrivenRefreshFrames);
+                }
+                else {
+                    // No per-frame tick available: one direct write is still better than none.
+                    const bool wrote = ApplyControllerVelocity(aggressor, target, mag);
+                    logger::trace("Shove (queued): target animation-driven, single direct velocity write ok={}", wrote);
+                }
             }
 
-            const auto& cfg = GetConfig();
-            QueuePhysicsShove(aggressorH, targetH, tries, cfg.shoveInitialDelayFrames, weaponMult);
+            if (cfg.enforceMinSeparation && cfg.separationRetries > 0 && IsPlayer(aggressor)) {
+                if (EnsureFrameHooks(aggressor)) {
+                    RegisterSeparationJob(aggressorH, targetH);
+                }
+                else {
+                    logger::trace("Separation: skipped (frame hooks unavailable)");
+                }
+            }
             });
     }
 }

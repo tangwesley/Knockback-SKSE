@@ -20,4 +20,9 @@ namespace Knockback
     bool IsMagicSource(RE::FormID sourceID);
     const RE::TESObjectWEAP* ResolveWeaponFromEventOrEquipped(const RE::TESHitEvent& evt, RE::Actor* aggressor);
     bool GetIsAttacking(RE::Actor* a);
+
+    // True while the actor's movement is being written by animation root motion
+    // (attacks, staggers, some idles). In that state the character controller's
+    // velocity is overwritten every frame.
+    bool IsAnimDrivenOrAttacking(RE::Actor* a);
 }

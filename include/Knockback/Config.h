@@ -16,15 +16,18 @@ namespace Knockback
         float applyCurrentMinVelocity{ 4.0f };
         float minDurationScale{ 0.15f };
 
-        // Attempts to apply shove
-        std::int32_t shoveRetries{ 3 };
-        std::int32_t shoveRetryDelayFrames{ 1 };
+        // While the target is attacking / animation-driven, root motion overwrites the
+        // character controller's velocity every frame and swallows ApplyCurrent. For this
+        // many frames after a successful shove, re-assert the shove velocity directly on the
+        // controller each frame the target is still animation-driven. 0 disables.
+        std::int32_t animDrivenRefreshFrames{ 8 };
 
-        // Delay before first shove attempt (helps avoid same-tick controller clobber)
-        std::int32_t shoveInitialDelayFrames{ 1 };
-
-        // If after a shove the target hasn't separated by at least this many units, reapply shove.
-        float minShoveSeparationDelta{ 8.0f };
+        // Player as target. The player's rigid-body controller rewrites its velocity every
+        // physics step, so the only push that moves the player is the per-step substitution
+        // in FrameTick, and it lasts exactly this window (with a linear ease-out). Distance is
+        // roughly magnitude * multiplier * frames / (2 * fps). 0 frames disables.
+        float playerShoveMultiplier{ 1.0f };
+        std::int32_t playerShoveFrames{ 24 };
 
         // POV option: suppress when player aggressor in first-person
         bool disableInFirstPerson{ true };

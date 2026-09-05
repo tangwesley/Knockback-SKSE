@@ -100,18 +100,15 @@ namespace Knockback
             }
 
             logger::trace(
-                "Shove: queue target={:08X} aggressor={:08X} mag={} dur={} retries={} delayFrames={} DisableInFirstPerson={}",
+                "Shove: queue target={:08X} aggressor={:08X} mag={} dur={} DisableInFirstPerson={}",
                 target->GetFormID(), aggressor->GetFormID(),
                 cfg.shoveMagnitude * weaponMult * powerMult, cfg.shoveDuration,
-                cfg.shoveRetries, cfg.shoveRetryDelayFrames,
                 cfg.disableInFirstPerson);
 
-            QueuePhysicsShoveWithAttackDeferral(
+            QueuePhysicsShove(
                 aggressor->GetHandle(),
                 target->GetHandle(),
-                cfg.shoveRetries,
-                weaponMult * powerMult,
-				20);
+                weaponMult * powerMult);
             
             return RE::BSEventNotifyControl::kContinue;
         }

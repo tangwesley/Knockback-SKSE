@@ -181,7 +181,6 @@ namespace Knockback
         // Floats
         const double shoveMagnitude = legacy.GetDoubleValue("General", "ShoveMagnitude", 2.5);
         const double shoveDuration = legacy.GetDoubleValue("General", "ShoveDuration", 0.12);
-        const double minShoveSeparationDelta = legacy.GetDoubleValue("General", "MinShoveSeparationDelta", 8.0);
         const double applyCurrentMinVelocity = legacy.GetDoubleValue("General", "ApplyCurrentMinVelocity", 4.0);
         const double minDurationScale = legacy.GetDoubleValue("General", "MinDurationScale", 0.15);
 
@@ -190,9 +189,9 @@ namespace Knockback
         const double separationMaxVelocity = legacy.GetDoubleValue("General", "SeparationMaxVelocity", 10.0);
 
         // Ints
-        const long shoveRetries = legacy.GetLongValue("General", "ShoveRetries", 3);
-        const long shoveRetryDelayFrames = legacy.GetLongValue("General", "ShoveRetryDelayFrames", 1);
-        const long shoveInitialDelayFrames = legacy.GetLongValue("General", "ShoveInitialDelayFrames", 1);
+        const long animDrivenRefreshFrames = legacy.GetLongValue("General", "AnimDrivenRefreshFrames", 8);
+        const double playerShoveMultiplier = legacy.GetDoubleValue("General", "PlayerShoveMultiplier", 1.0);
+        const long playerShoveFrames = legacy.GetLongValue("General", "PlayerShoveFrames", 24);
 
         const long separationRetries = legacy.GetLongValue("General", "SeparationRetries", 6);
         const long separationInitialDelay = legacy.GetLongValue("General", "SeparationInitialDelayFrames", 1);
@@ -206,13 +205,12 @@ namespace Knockback
         // Write keys that your MCM JSON / your MCM override loader expects (prefixed)
         mcm.SetDoubleValue("General", "fShoveMagnitude", shoveMagnitude);
         mcm.SetDoubleValue("General", "fShoveDuration", shoveDuration);
-        mcm.SetDoubleValue("General", "fMinShoveSeparationDelta", minShoveSeparationDelta);
         mcm.SetDoubleValue("General", "fApplyCurrentMinVelocity", applyCurrentMinVelocity);
         mcm.SetDoubleValue("General", "fMinDurationScale", minDurationScale);
 
-        mcm.SetLongValue("General", "iShoveRetries", shoveRetries);
-        mcm.SetLongValue("General", "iShoveRetryDelayFrames", shoveRetryDelayFrames);
-        mcm.SetLongValue("General", "iShoveInitialDelayFrames", shoveInitialDelayFrames);
+        mcm.SetLongValue("General", "iAnimDrivenRefreshFrames", animDrivenRefreshFrames);
+        mcm.SetDoubleValue("General", "fPlayerShoveMultiplier", playerShoveMultiplier);
+        mcm.SetLongValue("General", "iPlayerShoveFrames", playerShoveFrames);
 
         mcm.SetBoolValue("General", "bDisableInFirstPerson", disableInFirstPerson);
         mcm.SetBoolValue("General", "bDisableVerboseLogs", disableVerboseLogs);
@@ -287,11 +285,9 @@ namespace Knockback
             tmp.shoveMagnitude = static_cast<float>(legacyIni.GetDoubleValue("General", "ShoveMagnitude", tmp.shoveMagnitude));
             tmp.shoveDuration = static_cast<float>(legacyIni.GetDoubleValue("General", "ShoveDuration", tmp.shoveDuration));
 
-            tmp.shoveRetries = static_cast<std::int32_t>(legacyIni.GetLongValue("General", "ShoveRetries", tmp.shoveRetries));
-            tmp.shoveRetryDelayFrames = static_cast<std::int32_t>(legacyIni.GetLongValue("General", "ShoveRetryDelayFrames", tmp.shoveRetryDelayFrames));
-
-            tmp.shoveInitialDelayFrames = static_cast<std::int32_t>(legacyIni.GetLongValue("General", "ShoveInitialDelayFrames", tmp.shoveInitialDelayFrames));
-            tmp.minShoveSeparationDelta = static_cast<float>(legacyIni.GetDoubleValue("General", "MinShoveSeparationDelta", tmp.minShoveSeparationDelta));
+            tmp.animDrivenRefreshFrames = static_cast<std::int32_t>(legacyIni.GetLongValue("General", "AnimDrivenRefreshFrames", tmp.animDrivenRefreshFrames));
+            tmp.playerShoveMultiplier = static_cast<float>(legacyIni.GetDoubleValue("General", "PlayerShoveMultiplier", tmp.playerShoveMultiplier));
+            tmp.playerShoveFrames = static_cast<std::int32_t>(legacyIni.GetLongValue("General", "PlayerShoveFrames", tmp.playerShoveFrames));
 
             tmp.disableInFirstPerson = legacyIni.GetBoolValue("General", "DisableInFirstPerson", tmp.disableInFirstPerson);
             tmp.disableVerboseLogs = legacyIni.GetBoolValue("General", "DisableVerboseLogs", tmp.disableVerboseLogs);
@@ -399,11 +395,9 @@ namespace Knockback
             tmp.shoveMagnitude = getFloat("General", "fShoveMagnitude", "ShoveMagnitude", tmp.shoveMagnitude);
             tmp.shoveDuration = getFloat("General", "fShoveDuration", "ShoveDuration", tmp.shoveDuration);
 
-            tmp.shoveRetries = getInt("General", "iShoveRetries", "ShoveRetries", tmp.shoveRetries);
-            tmp.shoveRetryDelayFrames = getInt("General", "iShoveRetryDelayFrames", "ShoveRetryDelayFrames", tmp.shoveRetryDelayFrames);
-
-            tmp.shoveInitialDelayFrames = getInt("General", "iShoveInitialDelayFrames", "ShoveInitialDelayFrames", tmp.shoveInitialDelayFrames);
-            tmp.minShoveSeparationDelta = getFloat("General", "fMinShoveSeparationDelta", "MinShoveSeparationDelta", tmp.minShoveSeparationDelta);
+            tmp.animDrivenRefreshFrames = getInt("General", "iAnimDrivenRefreshFrames", "AnimDrivenRefreshFrames", tmp.animDrivenRefreshFrames);
+            tmp.playerShoveMultiplier = getFloat("General", "fPlayerShoveMultiplier", "PlayerShoveMultiplier", tmp.playerShoveMultiplier);
+            tmp.playerShoveFrames = getInt("General", "iPlayerShoveFrames", "PlayerShoveFrames", tmp.playerShoveFrames);
 
             tmp.disableInFirstPerson = getBool("General", "bDisableInFirstPerson", "DisableInFirstPerson", tmp.disableInFirstPerson);
             tmp.disableVerboseLogs = getBool("General", "bDisableVerboseLogs", "DisableVerboseLogs", tmp.disableVerboseLogs);
@@ -438,8 +432,11 @@ namespace Knockback
         }
 
         // clamps
-        if (tmp.shoveRetries < 0) tmp.shoveRetries = 0;
-        if (tmp.shoveRetries > 10) tmp.shoveRetries = 10;
+        if (tmp.animDrivenRefreshFrames < 0) tmp.animDrivenRefreshFrames = 0;
+        if (tmp.animDrivenRefreshFrames > 60) tmp.animDrivenRefreshFrames = 60;
+        if (tmp.playerShoveMultiplier < 0.0f) tmp.playerShoveMultiplier = 0.0f;
+        if (tmp.playerShoveFrames < 0) tmp.playerShoveFrames = 0;
+        if (tmp.playerShoveFrames > 120) tmp.playerShoveFrames = 120;
 
         // Publish
         g_cfg = std::move(tmp);
@@ -450,10 +447,12 @@ namespace Knockback
 
         // Watcher state: you should watch BOTH files (see next note)
         g_lastPath.clear(); // optional: stop using single-path watcher
-        logger::info("Config loaded. Legacy={} MCM={} DisableVerboseLogs={} WeaponMults(parsed={}, resolvedKeywords={}, unarmed={}, powerAttack={})",
+        logger::info("Config loaded. Legacy={} MCM={} DisableVerboseLogs={} AnimDrivenRefreshFrames={} PlayerShove(mult={}, frames={}) WeaponMults(parsed={}, resolvedKeywords={}, unarmed={}, powerAttack={})",
             haveLegacy ? legacyPath : "(none)",
             haveMcm ? mcmPath : "(none)",
             g_cfg.disableVerboseLogs,
+            g_cfg.animDrivenRefreshFrames,
+            g_cfg.playerShoveMultiplier, g_cfg.playerShoveFrames,
             parsed, resolved, g_cfg.unarmedMultiplier, g_cfg.powerAttackMultiplier);
     }
 
