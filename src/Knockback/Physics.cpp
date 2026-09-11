@@ -12,37 +12,18 @@ namespace logger = SKSE::log;
 
 namespace Knockback
 {
-        // CommonLibSSE NG's TESObjectREFR declaration order disagrees with the vtable
-        // the game actually uses: on SE 1.5.97 and AE 1.6.1170 a plain virtual call
-        // lands one slot late, so Actor::IsDead() reports true for live actors and
-        // Actor::ApplyCurrent() silently does nothing. The header's documented slots
-        // (0x99 / 0x9D) are correct on both, but hardcoding them unconditionally would
-        // break on any runtime where the declarations do line up.
-        //
-        // So decide at runtime: dispatch IsDead() both ways against an actor already
-        // known to be alive. Disagreement means the compiler-assigned index is wrong.
-        // Only then fall back to the documented slot numbers.
-        bool UseDocumentedVtableSlots(RE::Actor* a_liveActor)
-        {
-            enum : int { kUnknown = -1, kCompilerIndices = 0, kDocumentedSlots = 1 };
-            static std::atomic<int> cached{ kUnknown };
-
-            int mode = cached.load(std::memory_order_relaxed);
-            if (mode == kUnknown) {
-                const bool deadViaCompiler = a_liveActor->IsDead();
-                const bool deadViaSlot =
-                    REL::RelocateVirtual<decltype(&RE::Actor::IsDead)>(0x99, 0x9A, a_liveActor, true);
-
-                mode = (deadViaCompiler && !deadViaSlot) ? kDocumentedSlots : kCompilerIndices;
-                cached.store(mode, std::memory_order_relaxed);
-
-                logger::info("Vtable dispatch: {} (live actor IsDead: compiler={}, slot 0x99={})",
-                    mode == kDocumentedSlots ? "documented slots" : "compiler indices",
-                    deadViaCompiler, deadViaSlot);
-            }
-
-            return mode == kDocumentedSlots;
-        }
+    // CommonLibSSE NG's TESObjectREFR declaration order disagrees with the vtable the
+    // game actually uses: on SE 1.5.97 and AE 1.6.1170 a plain virtual call lands one
+    // slot late, so Actor::ApplyCurrent() would silently call the wrong function. The
+    // header's documented slot numbers are the ones taken from the real vtable, so every
+    // virtual this plugin touches (ApplyCurrent here, Update and SetLinearVelocityImpl
+    // in FrameTick) is dispatched by documented slot via REL::RelocateVirtual or a
+    // vtable write, never through the compiler-assigned index.
+    //
+    // An earlier version probed this at runtime by calling IsDead() both ways on a live
+    // actor. That probe was unreliable: the mis-indexed call lands on a function that
+    // returns a pointer, so its "true" depended on which actor was probed first, and the
+    // same machine could get different verdicts on different sessions.
 
     float HorizontalDistance(RE::Actor* a, RE::Actor* b)
     {
@@ -54,16 +35,21 @@ namespace Knockback
         return std::sqrt(dx * dx + dy * dy);
     }
 
-    void ShapeForApplyCurrent(float& mag, float& dur)
+    namespace
     {
-        const auto& cfg = GetConfig();
+        // ApplyCurrent refuses slow currents (observed threshold between 3.5 and 4 m/s).
+        // Raise the speed to clear it and shorten the duration by the same ratio so the
+        // distance is unchanged, but never below one physics step or the engine drops it.
+        constexpr float kApplyCurrentMinVelocity = 4.0f;
+        constexpr float kApplyCurrentMinDuration = 1.0f / 60.0f;
 
-        if (cfg.applyCurrentMinVelocity > 0.0f && mag > 0.0f) {
-            const float peak = std::max(mag, cfg.applyCurrentMinVelocity);
-            const float scaled = dur * (mag / peak);
-            const float minDur = dur * cfg.minDurationScale;
-            mag = peak;
-            dur = std::max(scaled, minDur);
+        void ShapeForApplyCurrent(float& mag, float& dur)
+        {
+            if (mag > 0.0f && mag < kApplyCurrentMinVelocity) {
+                const float scaled = dur * (mag / kApplyCurrentMinVelocity);
+                mag = kApplyCurrentMinVelocity;
+                dur = std::max(scaled, kApplyCurrentMinDuration);
+            }
         }
     }
 
@@ -102,6 +88,8 @@ namespace Knockback
             return false;
         }
 
+        ShapeForApplyCurrent(magnitude, duration);
+
         // Direction from aggressor -> target
         const auto aPos = aggressor->GetPosition();
         const auto tPos = target->GetPosition();
@@ -132,11 +120,35 @@ namespace Knockback
             duration,
 			target->GetFormID());
         // target is known alive here, so the dispatch probe is meaningful.
-        const bool ok = UseDocumentedVtableSlots(target)
-            ? REL::RelocateVirtual<decltype(&RE::Actor::ApplyCurrent)>(0x9D, 0x9E, target, duration, vel)
-            : target->ApplyCurrent(duration, vel);
+        const float velocityTimeBefore = cc->velocityTime;
 
-        logger::trace("ApplyPhysicsShove: ApplyCurrent -> {}", ok);
+        const bool returned =
+            REL::RelocateVirtual<decltype(&RE::Actor::ApplyCurrent)>(0x9D, 0x9E, target, duration, vel);
+
+        // Independent check that the slot we called really is ApplyCurrent: it writes
+        // the controller's velocityMod / velocityTime. If those now hold what we passed,
+        // the push landed regardless of the return value. If they do not and the call
+        // returned false, the slot is wrong on this runtime and nothing else that relies
+        // on documented slot numbers (the frame hooks) should be trusted either.
+        const float velocityTimeAfter = cc->velocityTime;
+        const float modX = cc->velocityMod.quad.m128_f32[0];
+        const float modY = cc->velocityMod.quad.m128_f32[1];
+        const bool fieldsUpdated =
+            std::fabs(velocityTimeAfter - duration) < 1e-3f &&
+            std::fabs(modX - vel.quad.m128_f32[0]) < 1e-3f &&
+            std::fabs(modY - vel.quad.m128_f32[1]) < 1e-3f;
+
+        const bool ok = returned || fieldsUpdated;
+
+        if (!returned) {
+            logger::trace("ApplyPhysicsShove: ApplyCurrent returned false; velocityTime {} -> {} (expected {}), velocityMod=({}, {}) fieldsUpdated={} runtime={}",
+                velocityTimeBefore, velocityTimeAfter, duration, modX, modY, fieldsUpdated,
+                REL::Module::get().version().string());
+        }
+        else {
+            logger::trace("ApplyPhysicsShove: ApplyCurrent -> true (fieldsUpdated={}, velocityTime before={})",
+                fieldsUpdated, velocityTimeBefore);
+        }
         return ok;
     }
 

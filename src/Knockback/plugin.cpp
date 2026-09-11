@@ -12,7 +12,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse)
     SKSE::Init(skse);
     Knockback::SetupLog();
 
-    logger::info("KnockbackPlugin loaded (logger OK)");
+    logger::info("KnockbackPlugin loaded (logger OK). Runtime {} ({})", REL::Module::get().version().string(), REL::Module::IsAE() ? "AE" : (REL::Module::IsSE() ? "SE" : "other"));
 
     auto* messaging = SKSE::GetMessagingInterface();
     if (!messaging) {

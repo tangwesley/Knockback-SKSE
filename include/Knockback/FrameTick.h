@@ -16,13 +16,15 @@ namespace Knockback
     //    rigid-body controller rewrites its velocity every step, so this is what
     //    actually moves the player.
     //
-    // Installation is lazy: it needs a live actor to run the vtable-dispatch probe, and it
-    // is skipped (with a warning) on a runtime where the documented slots are not trusted.
-    bool EnsureFrameHooks(RE::Actor* a_liveActor);
+    // Installation is lazy (first shove) and uses the header's documented SE/AE slot
+    // numbers. It is skipped, with a warning, on VR.
+    bool EnsureFrameHooks();
     bool FrameHooksActive();
 
     // Registers (or replaces) a per-frame horizontal velocity override on the target,
-    // serviced for up to `frames` real frames.
+    // serviced for `seconds` of real time. The frame count is derived from the measured
+    // frame delta on first service (at least one frame), so the push is the same length
+    // at any frame rate.
     //  easeOut:         magnitude ramps linearly to zero over the window instead of
     //                   holding constant and stopping dead.
     //  ignoreAnimState: keep pushing even when the target is not animation-driven.
@@ -32,7 +34,7 @@ namespace Knockback
         RE::ActorHandle aggressorH,
         RE::ActorHandle targetH,
         float magnitude,
-        std::int32_t frames,
+        float seconds,
         bool easeOut = false,
         bool ignoreAnimState = false);
 
