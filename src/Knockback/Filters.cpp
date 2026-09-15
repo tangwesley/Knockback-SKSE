@@ -85,6 +85,23 @@ namespace Knockback
         return a && player && a == player;
     }
 
+    namespace
+    {
+        bool IsPlayerInFirstPerson(RE::Actor* a)
+        {
+            if (!IsPlayer(a)) {
+                return false;
+            }
+
+            auto* cam = RE::PlayerCamera::GetSingleton();
+            if (!cam) {
+                return false;
+            }
+
+            return cam->IsInFirstPerson();
+        }
+    }
+
     bool ShouldDisableDueToFirstPerson(RE::Actor* aggressor)
     {
         const auto& cfg = GetConfig();
@@ -92,21 +109,19 @@ namespace Knockback
         if (!cfg.disableInFirstPerson) {
             return false;
         }
-        if (!aggressor) {
+
+        return IsPlayerInFirstPerson(aggressor);
+    }
+
+    bool ShouldDisablePlayerKnockbackDueToFirstPerson(RE::Actor* target)
+    {
+        const auto& cfg = GetConfig();
+
+        if (!cfg.disablePlayerKnockbackInFirstPerson) {
             return false;
         }
 
-        auto* player = RE::PlayerCharacter::GetSingleton();
-        if (!player || aggressor != player) {
-            return false;
-        }
-
-        auto* cam = RE::PlayerCamera::GetSingleton();
-        if (!cam) {
-            return false;
-        }
-
-        return cam->IsInFirstPerson();
+        return IsPlayerInFirstPerson(target);
     }
 
     RE::TESRace* ResolveActorRace(const RE::Actor* actor)

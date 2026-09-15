@@ -40,7 +40,11 @@ namespace Knockback
             if (!IsAlive(aggressor) || !IsAlive(target)) return;
 
             if (ShouldDisableDueToFirstPerson(aggressor)) {
-                logger::trace("Shove (queued): suppressed (player in first-person)");
+                logger::trace("Shove (queued): suppressed (player aggressor in first-person)");
+                return;
+            }
+            if (ShouldDisablePlayerKnockbackDueToFirstPerson(target)) {
+                logger::trace("Shove (queued): suppressed (player target in first-person)");
                 return;
             }
 

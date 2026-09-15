@@ -26,6 +26,9 @@ namespace Knockback
         // POV option: suppress when player aggressor in first-person
         bool disableInFirstPerson{ true };
 
+        // POV option: suppress when the player is the target while in first-person
+        bool disablePlayerKnockbackInFirstPerson{ false };
+
         // Suppress per-hit trace logging (info and above still logged)
         bool disableVerboseLogs{ true };
 

@@ -197,6 +197,7 @@ namespace Knockback
 
         // Bools
         const bool disableInFirstPerson = legacy.GetBoolValue("General", "DisableInFirstPerson", true);
+        const bool disablePlayerKnockbackInFirstPerson = legacy.GetBoolValue("General", "DisablePlayerKnockbackInFirstPerson", false);
         const bool enforceMinSeparation = legacy.GetBoolValue("General", "EnforceMinSeparation", true);
         const bool disableVerboseLogs = legacy.GetBoolValue("General", "DisableVerboseLogs", true);
 
@@ -209,6 +210,7 @@ namespace Knockback
         mcm.SetDoubleValue("General", "fPlayerShoveDuration", playerShoveDuration);
 
         mcm.SetBoolValue("General", "bDisableInFirstPerson", disableInFirstPerson);
+        mcm.SetBoolValue("General", "bDisablePlayerKnockbackInFirstPerson", disablePlayerKnockbackInFirstPerson);
         mcm.SetBoolValue("General", "bDisableVerboseLogs", disableVerboseLogs);
 
         mcm.SetBoolValue("General", "bEnforceMinSeparation", enforceMinSeparation);
@@ -286,6 +288,7 @@ namespace Knockback
             tmp.playerShoveDuration = static_cast<float>(legacyIni.GetDoubleValue("General", "PlayerShoveDuration", tmp.playerShoveDuration));
 
             tmp.disableInFirstPerson = legacyIni.GetBoolValue("General", "DisableInFirstPerson", tmp.disableInFirstPerson);
+            tmp.disablePlayerKnockbackInFirstPerson = legacyIni.GetBoolValue("General", "DisablePlayerKnockbackInFirstPerson", tmp.disablePlayerKnockbackInFirstPerson);
             tmp.disableVerboseLogs = legacyIni.GetBoolValue("General", "DisableVerboseLogs", tmp.disableVerboseLogs);
 
             tmp.enforceMinSeparation = legacyIni.GetBoolValue("General", "EnforceMinSeparation", tmp.enforceMinSeparation);
@@ -394,6 +397,7 @@ namespace Knockback
             tmp.playerShoveDuration = getFloat("General", "fPlayerShoveDuration", "PlayerShoveDuration", tmp.playerShoveDuration);
 
             tmp.disableInFirstPerson = getBool("General", "bDisableInFirstPerson", "DisableInFirstPerson", tmp.disableInFirstPerson);
+            tmp.disablePlayerKnockbackInFirstPerson = getBool("General", "bDisablePlayerKnockbackInFirstPerson", "DisablePlayerKnockbackInFirstPerson", tmp.disablePlayerKnockbackInFirstPerson);
             tmp.disableVerboseLogs = getBool("General", "bDisableVerboseLogs", "DisableVerboseLogs", tmp.disableVerboseLogs);
 
             tmp.enforceMinSeparation = getBool("General", "bEnforceMinSeparation", "EnforceMinSeparation", tmp.enforceMinSeparation);
@@ -439,10 +443,11 @@ namespace Knockback
 
         // Watcher state: you should watch BOTH files (see next note)
         g_lastPath.clear(); // optional: stop using single-path watcher
-        logger::info("Config loaded. Legacy={} MCM={} DisableVerboseLogs={} Shove(mag={}, dur={}) AttackingTargetMinDuration={} PlayerShove(mult={}, dur={}) WeaponMults(parsed={}, resolvedKeywords={}, unarmed={}, powerAttack={})",
+        logger::info("Config loaded. Legacy={} MCM={} DisableVerboseLogs={} FirstPerson(disableEnemy={}, disablePlayer={}) Shove(mag={}, dur={}) AttackingTargetMinDuration={} PlayerShove(mult={}, dur={}) WeaponMults(parsed={}, resolvedKeywords={}, unarmed={}, powerAttack={})",
             haveLegacy ? legacyPath : "(none)",
             haveMcm ? mcmPath : "(none)",
             g_cfg.disableVerboseLogs,
+            g_cfg.disableInFirstPerson, g_cfg.disablePlayerKnockbackInFirstPerson,
             g_cfg.shoveMagnitude, g_cfg.shoveDuration,
             g_cfg.attackingTargetMinDuration,
             g_cfg.playerShoveMultiplier, g_cfg.playerShoveDuration,

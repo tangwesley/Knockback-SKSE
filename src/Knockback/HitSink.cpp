@@ -60,6 +60,10 @@ namespace Knockback
                 logger::trace("Shove: skipped (player aggressor in first person)");
                 return RE::BSEventNotifyControl::kContinue;
             }
+            if (ShouldDisablePlayerKnockbackDueToFirstPerson(target)) {
+                logger::trace("Shove: skipped (player target in first person)");
+                return RE::BSEventNotifyControl::kContinue;
+            }
 
             if (!IsValidKnockbackTarget(target)) {
                 logger::trace("Shove: target not allowed (humanoid filter)");
@@ -100,10 +104,10 @@ namespace Knockback
             }
 
             logger::trace(
-                "Shove: queue target={:08X} aggressor={:08X} mag={} dur={} DisableInFirstPerson={}",
+                "Shove: queue target={:08X} aggressor={:08X} mag={} dur={} DisableInFirstPerson={} DisablePlayerKnockbackInFirstPerson={}",
                 target->GetFormID(), aggressor->GetFormID(),
                 cfg.shoveMagnitude * weaponMult * powerMult, cfg.shoveDuration,
-                cfg.disableInFirstPerson);
+                cfg.disableInFirstPerson, cfg.disablePlayerKnockbackInFirstPerson);
 
             QueuePhysicsShove(
                 aggressor->GetHandle(),

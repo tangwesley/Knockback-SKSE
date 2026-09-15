@@ -44,8 +44,10 @@ Example `KnockbackPlugin.ini`:
 ;   4.0+ = strong shove / noticeable stagger
 ShoveMagnitude = 3.5
 ShoveDuration = 0.12
-;   No knockback to enemies in first person. Player should still get knocked back.
+;   No knockback to enemies while the player is in first person. Player still gets knocked back.
 DisableInFirstPerson=true
+;   Player is not knocked back while in first person. Enemies are unaffected.
+DisablePlayerKnockbackInFirstPerson=false
 ;   Suppresses the per-hit trace spam in the log file. Set to false when troubleshooting.
 ;   Startup/config messages are always logged.
 ;   With MCM Helper installed, the MCM toggle overrides this line.
