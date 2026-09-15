@@ -44,18 +44,14 @@ Example `KnockbackPlugin.ini`:
 ;   4.0+ = strong shove / noticeable stagger
 ShoveMagnitude = 3.5
 ShoveDuration = 0.12
-;   No knockback to enemies in first person. Player should still get knocked back.
+;   No knockback to enemies while the player is in first person. Player still gets knocked back.
 DisableInFirstPerson=true
+;   Player is not knocked back while in first person. Enemies are unaffected.
+DisablePlayerKnockbackInFirstPerson=false
 ;   Suppresses the per-hit trace spam in the log file. Set to false when troubleshooting.
 ;   Startup/config messages are always logged.
 ;   With MCM Helper installed, the MCM toggle overrides this line.
 DisableVerboseLogs=true
-; Set for scaling when ShoveMagnitude is too low. Here's the formula.
-; peakV = max(ShoveMagnitude, ApplyCurrentMinVelocity)
-; scaledDuration = ShoveDuration * (ShoveMagnitude / peakV)
-; scaledDuration = max(scaledDuration, configDuration * minDurationScale)
-ApplyCurrentMinVelocity=4.0
-MinDurationScale=0.15
 ; Minimum separation enforcement (push aggressor back if too close after shove, useful if enemy is against a wall).
 ; Player aggressor only. Runs on the per-frame hook: after SeparationInitialDelayFrames the distance
 ; is measured each attempt; if under MinSeparationDistance the player is pushed away at
@@ -68,17 +64,14 @@ SeparationMaxVelocity=12.0
 SeparationRetries=6
 SeparationInitialDelayFrames=2
 SeparationRetryDelayFrames=1
-; While the target is mid-attack its movement is animation-driven and the normal shove
-; gets overwritten every frame. For this many frames after a hit the shove velocity is
-; re-applied directly, right after the target's own movement update each frame, while
-; the target is still attacking. 0 disables.
-AnimDrivenRefreshFrames=8
-; Player as target. The player's controller rewrites its velocity every physics step, so
-; the player is pushed by substituting the shove into that write for this many frames,
-; ramping linearly to zero. Distance is about ShoveMagnitude * PlayerShoveMultiplier *
-; PlayerShoveFrames / (2 * fps). Raise either value for a stronger hit. 0 frames disables.
+; Targets that are mid-attack are animation-driven and resist a short push. A hit on an
+; attacking target is pushed for at least this many seconds (ShoveDuration if longer).
+AttackingTargetMinDuration=0.13
+; Player as target. The player is pushed for this many seconds, ramping linearly to zero.
+; Distance is about ShoveMagnitude * PlayerShoveMultiplier * PlayerShoveDuration / 2.
+; 0 disables player knockback.
 PlayerShoveMultiplier=1.0
-PlayerShoveFrames=24
+PlayerShoveDuration=0.4
 
 [WeaponMultipliers]
 ; Keyword FormID = multiplier
@@ -324,38 +317,34 @@ Deny=Dragonborn.esm|00014495 ; Giant
 ========================================================================================================
 
 
-## Runtime note: vtable dispatch workaround
+## Runtime note: vtable dispatch
 
 CommonLibSSE NG's `TESObjectREFR` virtual declarations do not line up with the
 vtable the game actually uses. On SE 1.5.97 and AE 1.6.1170 a plain virtual call
-lands one slot late, which makes `Actor::IsDead()` return true for living actors
-and `Actor::ApplyCurrent()` do nothing at all - the plugin loads, registers its
-hit sink, and silently applies no knockback.
+lands one slot late, so `Actor::IsDead()` reports true for living actors and
+`Actor::ApplyCurrent()` calls the wrong function.
 
-Two things work around it:
+The plugin therefore never dispatches through compiler-assigned indices:
 
 - `Knockback::IsAlive()` (Filters) reads `ActorState::GetLifeState()` instead of
   calling `Actor::IsDead()`.
-- `Physics.cpp` probes dispatch once per session by calling `IsDead()` both ways
-  on an actor already known to be alive. If they disagree, the shove is applied
-  through the header's documented slot (`0x9D`) via `REL::RelocateVirtual`;
-  otherwise the plain virtual call is used. The startup log records which path
-  was chosen (`Vtable dispatch: ...`).
+- `Physics.cpp` calls `ApplyCurrent` through the header's documented slot (`0x9D`)
+  via `REL::RelocateVirtual`.
 - `FrameTick.cpp` hooks `Character::Update` and `PlayerCharacter::Update` at the
-  documented slot (`0xAD`) to get a real per-frame tick for the animation-driven
-  velocity refresh. SKSE's task queue drains re-queued tasks within the same frame,
-  so it cannot serve as one. It also hooks `SetLinearVelocityImpl` (slot `07`) on
-  both character controller types and substitutes the shove into the engine's own
-  per-step velocity write while a refresh is active; the player's rigid-body
-  controller rewrites its velocity every step, so this is the only write that moves
-  the player. The hooks are installed lazily on the first shove and only when the
-  probe above reports documented slots; otherwise the refresh degrades to a single
-  direct velocity write and the log says so.
+  documented slot (`0xAD`) to get a real per-frame tick. SKSE's task queue drains
+  re-queued tasks within the same frame, so it cannot serve as one. It also hooks
+  `SetLinearVelocityImpl` (slot `07`) on both character controller types and
+  substitutes the shove into the engine's own per-step velocity write; the player's
+  rigid-body controller rewrites its velocity every step, so this is the only write
+  that moves the player. The hooks install lazily on the first shove and log the
+  runtime version. VR has different slot numbering and is refused with a warning.
 
-The probe is deliberately adaptive rather than hardcoded, so a runtime whose
-declarations do line up keeps using the normal virtual call. Verified working on
-SE 1.5.97 and AE 1.6.1170. If upstream corrects the declaration order, the probe
-will simply stop engaging and this code can be removed.
+The documented slot numbers are taken from the real SE/AE vtables and verified on
+SE 1.5.97 and AE 1.6.1170. An earlier release probed the layout at runtime by
+calling `IsDead()` both ways on a live actor; that probe depended on which actor
+was probed first and could disable the plugin on a machine where it had worked the
+session before, so it was removed.
+
 ## License
 
 Copyright (C) 2026 Wesley Tang

@@ -6,6 +6,7 @@
 #include <Knockback/Physics.h>
 
 #include "SKSE/SKSE.h"
+#include <algorithm>
 
 namespace logger = SKSE::log;
 
@@ -39,7 +40,11 @@ namespace Knockback
             if (!IsAlive(aggressor) || !IsAlive(target)) return;
 
             if (ShouldDisableDueToFirstPerson(aggressor)) {
-                logger::trace("Shove (queued): suppressed (player in first-person)");
+                logger::trace("Shove (queued): suppressed (player aggressor in first-person)");
+                return;
+            }
+            if (ShouldDisablePlayerKnockbackDueToFirstPerson(target)) {
+                logger::trace("Shove (queued): suppressed (player target in first-person)");
                 return;
             }
 
@@ -53,50 +58,53 @@ namespace Knockback
                 return;
             }
 
-            float mag = cfg.shoveMagnitude * weaponMult;
-            float dur = cfg.shoveDuration;
-            ShapeForApplyCurrent(mag, dur);
+            const float mag = cfg.shoveMagnitude * weaponMult;
+            const float dur = cfg.shoveDuration;
 
-            const bool ok = ApplyPhysicsShove(aggressor, target, mag, dur);
-            if (!ok) {
-                logger::trace("Shove (queued): failed mag={} dur={} mult={}", mag, dur, weaponMult);
+            // ApplyCurrent is best-effort. It refuses (returns false, writes nothing) when
+            // the controller already has a current active, which some load orders keep
+            // permanently true for every actor. The frame hooks do not depend on it.
+            const bool applied = ApplyPhysicsShove(aggressor, target, mag, dur);
+            const bool hooks = EnsureFrameHooks();
+
+            logger::trace("Shove (queued): mag={} dur={} mult={} applyCurrent={} frameHooks={}",
+                mag, dur, weaponMult, applied, hooks);
+
+            if (!hooks) {
+                if (!applied) {
+                    // Nothing else can move the target. One direct write beats none.
+                    const bool wrote = ApplyControllerVelocity(aggressor, target, mag);
+                    logger::trace("Shove (queued): no hooks and ApplyCurrent refused; single direct velocity write ok={}", wrote);
+                }
                 return;
             }
-
-            logger::trace("Shove (queued): applied mag={} dur={} mult={}", mag, dur, weaponMult);
 
             if (IsPlayer(target)) {
                 // The player's rigid-body controller rewrites its velocity every physics
                 // step regardless of animation state, so ApplyCurrent barely registers.
                 // The per-step substitution is the whole push here.
-                if (cfg.playerShoveFrames > 0 && EnsureFrameHooks(target)) {
+                if (cfg.playerShoveDuration > 0.0f) {
                     const float playerMag = mag * cfg.playerShoveMultiplier;
-                    logger::trace("Shove (queued): player target, substituting velocity for {} frames (mag={}, ease-out)",
-                        cfg.playerShoveFrames, playerMag);
-                    RegisterVelocityOverride(aggressorH, targetH, playerMag, cfg.playerShoveFrames,
+                    logger::trace("Shove (queued): player target, substituting velocity for {} s (mag={}, ease-out)",
+                        cfg.playerShoveDuration, playerMag);
+                    RegisterVelocityOverride(aggressorH, targetH, playerMag, cfg.playerShoveDuration,
                         /*easeOut*/ true, /*ignoreAnimState*/ true);
                 }
             }
-            else if (cfg.animDrivenRefreshFrames > 0 && IsAnimDrivenOrAttacking(target)) {
-                if (EnsureFrameHooks(target)) {
-                    logger::trace("Shove (queued): target animation-driven, refreshing velocity post-Update for {} frames",
-                        cfg.animDrivenRefreshFrames);
-                    RegisterVelocityOverride(aggressorH, targetH, mag, cfg.animDrivenRefreshFrames);
-                }
-                else {
-                    // No per-frame tick available: one direct write is still better than none.
-                    const bool wrote = ApplyControllerVelocity(aggressor, target, mag);
-                    logger::trace("Shove (queued): target animation-driven, single direct velocity write ok={}", wrote);
-                }
+            else {
+                // Constant push for the shove duration in real time. An attacking target
+                // gets at least AttackingTargetMinDuration, since root motion would
+                // otherwise swallow a short window.
+                const bool animDriven = IsAnimDrivenOrAttacking(target);
+                const float seconds = animDriven ? std::max(dur, cfg.attackingTargetMinDuration) : dur;
+                logger::trace("Shove (queued): npc target, substituting velocity for {} s (animDriven={})",
+                    seconds, animDriven);
+                RegisterVelocityOverride(aggressorH, targetH, mag, seconds,
+                    /*easeOut*/ false, /*ignoreAnimState*/ true);
             }
 
             if (cfg.enforceMinSeparation && cfg.separationRetries > 0 && IsPlayer(aggressor)) {
-                if (EnsureFrameHooks(aggressor)) {
-                    RegisterSeparationJob(aggressorH, targetH);
-                }
-                else {
-                    logger::trace("Separation: skipped (frame hooks unavailable)");
-                }
+                RegisterSeparationJob(aggressorH, targetH);
             }
             });
     }

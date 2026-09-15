@@ -6,13 +6,9 @@ namespace Knockback
 {
     float HorizontalDistance(RE::Actor* a, RE::Actor* b);
 
-    // Runtime probe: true when the header's documented vtable slot numbers match the
-    // game's real vtable (and the compiler-assigned indices do not). Cached after the
-    // first call. Needs an actor already known to be alive.
-    bool UseDocumentedVtableSlots(RE::Actor* a_liveActor);
-
-    void ShapeForApplyCurrent(float& mag, float& dur);
-
+    // Best-effort ApplyCurrent push. The engine ignores currents below roughly 4 m/s, so a
+    // weaker request is raised to that speed and shortened by the same ratio internally;
+    // callers pass the configured magnitude and duration as written.
     bool ApplyPhysicsShove(RE::Actor* aggressor, RE::Actor* target, float magnitude, float duration);
 
     // Writes the shove velocity straight onto the target's character controller for

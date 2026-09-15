@@ -11,7 +11,10 @@ namespace Knockback
     // Actor::IsDead() reports true for live actors on some runtimes; read the
     // life state bitfield instead of dispatching through the vtable.
     bool IsAlive(RE::Actor* a);
+    // Player aggressor in first person (DisableInFirstPerson).
     bool ShouldDisableDueToFirstPerson(RE::Actor* aggressor);
+    // Player target in first person (DisablePlayerKnockbackInFirstPerson).
+    bool ShouldDisablePlayerKnockbackDueToFirstPerson(RE::Actor* target);
 
     bool IsValidKnockbackTarget(const RE::Actor* target);
 

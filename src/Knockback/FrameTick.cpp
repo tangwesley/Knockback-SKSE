@@ -27,6 +27,7 @@ namespace Knockback
             std::int32_t totalFrames{ 0 };
             bool easeOut{ false };
             bool ignoreAnimState{ false };
+            float pendingSeconds{ 0.0f };  // window length; converted to frames on first service
 
             // Refreshed each frame from the Update hook; consumed by the velocity hook.
             RE::bhkCharacterController* controller{ nullptr };
@@ -101,7 +102,7 @@ namespace Knockback
             return ov.controller != nullptr;
         }
 
-        void ServiceOverride(RE::Actor* a_actor)
+        void ServiceOverride(RE::Actor* a_actor, float a_delta)
         {
             if (!a_actor || g_overrideCount.load(std::memory_order_relaxed) == 0) {
                 return;
@@ -113,6 +114,14 @@ namespace Knockback
                 auto tPtr = it->target.get();
                 if (!tPtr || tPtr.get() != a_actor) {
                     continue;
+                }
+
+                if (it->pendingSeconds > 0.0f) {
+                    const float dt = (a_delta > 1e-4f && a_delta < 0.5f) ? a_delta : (1.0f / 60.0f);
+                    const auto frames = std::max<std::int32_t>(1, static_cast<std::int32_t>(std::ceil(it->pendingSeconds / dt)));
+                    it->framesLeft = frames;
+                    it->totalFrames = frames;
+                    it->pendingSeconds = 0.0f;
                 }
 
                 auto aPtr = it->aggressor.get();
@@ -257,7 +266,7 @@ namespace Knockback
 
                             // Override on the player, direction target -> player (away from target).
                             // Constant velocity so distance covered is exactly mag * dur.
-                            RegisterVelocityOverride(job.target, job.player, mag, frames,
+                            RegisterVelocityOverride(job.target, job.player, mag, dur,
                                 /*easeOut*/ false, /*ignoreAnimState*/ true);
 
                             job.pushFramesLeft = frames;
@@ -284,7 +293,7 @@ namespace Knockback
         void CharacterUpdateHook(RE::Actor* a_this, float a_delta)
         {
             g_origCharacterUpdate(a_this, a_delta);
-            ServiceOverride(a_this);
+            ServiceOverride(a_this, a_delta);
         }
 
         void PlayerUpdateHook(RE::Actor* a_this, float a_delta)
@@ -293,7 +302,7 @@ namespace Knockback
             g_origPlayerUpdate(a_this, a_delta);
             // Separation may register an override on the player; service it in the same frame.
             ServiceSeparation(a_this, a_delta);
-            ServiceOverride(a_this);
+            ServiceOverride(a_this, a_delta);
         }
 
         void ProxySetLinearVelocityHook(RE::bhkCharacterController* a_this, const RE::hkVector4& a_vel)
@@ -319,21 +328,18 @@ namespace Knockback
         return g_frame.load(std::memory_order_relaxed);
     }
 
-    bool EnsureFrameHooks(RE::Actor* a_liveActor)
+    bool EnsureFrameHooks()
     {
         const int state = g_hookState.load(std::memory_order_acquire);
         if (state != kHooksUnattempted) {
             return state == kHooksInstalled;
         }
-        if (!a_liveActor) {
-            return false;
-        }
 
-        // The Update slot number comes from the same header comments the ApplyCurrent
-        // workaround relies on. Only trust it when the probe says those comments match
-        // the runtime's real vtable.
-        if (!UseDocumentedVtableSlots(a_liveActor)) {
-            logger::warn("Frame hooks not installed: runtime vtable matches compiler indices, so the documented Actor::Update slot is unverified. Per-frame velocity refresh disabled.");
+        // Slot numbers are the header's documented ones, taken from the real SE/AE
+        // vtables (see the note in Physics.cpp). VR has different numbering and is not
+        // built; refuse rather than patch the wrong slot if it ever is.
+        if (REL::Module::IsVR()) {
+            logger::warn("Frame hooks not installed: VR vtable layout is not supported. Per-frame velocity push disabled.");
             g_hookState.store(kHooksUnavailable, std::memory_order_release);
             return false;
         }
@@ -356,8 +362,8 @@ namespace Knockback
             rigidBodyVtbl.write_vfunc(kSetLinearVelocitySlot, RigidBodySetLinearVelocityHook));
 
         g_hookState.store(kHooksInstalled, std::memory_order_release);
-        logger::info("Installed frame hooks: Character/PlayerCharacter::Update (slot 0x{:X}), bhkCharProxyController/bhkCharRigidBodyController::SetLinearVelocityImpl (slot 0x{:X})",
-            kUpdateSlot, kSetLinearVelocitySlot);
+        logger::info("Installed frame hooks on runtime {}: Character/PlayerCharacter::Update (slot 0x{:X}), bhkCharProxyController/bhkCharRigidBodyController::SetLinearVelocityImpl (slot 0x{:X})",
+            REL::Module::get().version().string(), kUpdateSlot, kSetLinearVelocitySlot);
         return true;
     }
 
@@ -395,11 +401,11 @@ namespace Knockback
         RE::ActorHandle aggressorH,
         RE::ActorHandle targetH,
         float magnitude,
-        std::int32_t frames,
+        float seconds,
         bool easeOut,
         bool ignoreAnimState)
     {
-        if (frames <= 0 || magnitude <= 0.0f) {
+        if (seconds <= 0.0f || magnitude <= 0.0f) {
             return;
         }
 
@@ -418,10 +424,11 @@ namespace Knockback
             if (ov.target == targetH) {
                 ov.aggressor = aggressorH;
                 ov.magnitude = magnitude;
-                ov.framesLeft = frames;
-                ov.totalFrames = frames;
+                ov.framesLeft = 0;
+                ov.totalFrames = 0;
                 ov.easeOut = easeOut;
                 ov.ignoreAnimState = ignoreAnimState;
+                ov.pendingSeconds = seconds;
                 ov.currentMagnitude = magnitude;
                 RefreshDirection(ov, aggressor, target);
                 return;
@@ -432,10 +439,11 @@ namespace Knockback
         ov.aggressor = aggressorH;
         ov.target = targetH;
         ov.magnitude = magnitude;
-        ov.framesLeft = frames;
-        ov.totalFrames = frames;
+        ov.framesLeft = 0;
+        ov.totalFrames = 0;
         ov.easeOut = easeOut;
         ov.ignoreAnimState = ignoreAnimState;
+        ov.pendingSeconds = seconds;
         ov.currentMagnitude = magnitude;
         RefreshDirection(ov, aggressor, target);
         g_overrides.push_back(ov);
